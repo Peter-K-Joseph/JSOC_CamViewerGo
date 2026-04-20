@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -39,6 +40,8 @@ type rpcResponse struct {
 	Result  any            `json:"result"`
 	Params  map[string]any `json:"params"`
 	Session any            `json:"session"`
+
+	raw []byte
 }
 
 type rpcError struct {
@@ -117,8 +120,7 @@ func Login(host string, port int, username, password string) (*Session, error) {
 			"userName":      username,
 			"password":      loginHash,
 			"clientType":    "Web3.0",
-			"ipAddr":        "0.0.0.0",
-			"userLoginType": "Direct",
+			"loginType":     "Direct",
 			"authorityType": "Default",
 			"passwordType":  "Default",
 		},
@@ -129,10 +131,15 @@ func Login(host string, port int, username, password string) (*Session, error) {
 		return nil, fmt.Errorf("rpc2 login: %w", err)
 	}
 	if resp2.Error != nil && resp2.Error.Code != 0 {
-		return nil, fmt.Errorf("rpc2 auth failed: %s (code %d)", resp2.Error.Message, resp2.Error.Code)
+		log.Printf("[auth] rpc2 login rejected by %s: code=%d hex=0x%X message=%q raw=%s",
+			base, resp2.Error.Code, resp2.Error.Code, resp2.Error.Message, truncateLog(resp2.raw, 1000))
+		return nil, fmt.Errorf("rpc2 auth failed: %s (code %d / 0x%X)",
+			resp2.Error.Message, resp2.Error.Code, resp2.Error.Code)
 	}
 	if ok, present := resultBool(resp2.Result); present && !ok {
-		return nil, fmt.Errorf("rpc2 auth failed")
+		log.Printf("[auth] rpc2 login returned result=false from %s: raw=%s",
+			base, truncateLog(resp2.raw, 1000))
+		return nil, fmt.Errorf("rpc2 auth failed: result=false")
 	}
 	if !isEmptySession(resp2.Session) {
 		sessionValue = resp2.Session
@@ -169,8 +176,9 @@ func doRPC(client *http.Client, endpoint string, req rpcRequest) (*rpcResponse, 
 	}
 	var rpcResp rpcResponse
 	if err := json.Unmarshal(raw, &rpcResp); err != nil {
-		return nil, fmt.Errorf("parse rpc response: %w", err)
+		return nil, fmt.Errorf("parse rpc response: %w; raw=%s", err, truncateLog(raw, 1000))
 	}
+	rpcResp.raw = raw
 	return &rpcResp, nil
 }
 
@@ -230,6 +238,14 @@ func resultBool(result any) (bool, bool) {
 		return b, true
 	}
 	return false, false
+}
+
+func truncateLog(raw []byte, n int) string {
+	s := strings.TrimSpace(string(raw))
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 func md5Hex(s string) string {
