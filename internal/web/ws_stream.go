@@ -1,6 +1,8 @@
 package web
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -152,6 +154,123 @@ func (s *Server) handleWSStreamByID(w http.ResponseWriter, r *http.Request) {
 	s.handleWSStream(w, r)
 }
 
+// handleWSAnnexB handles GET /ws/annexb/{streamKey}
+// Protocol:
+//  1. Send JSON text: {"codec":"avc1.4D001E","format":"annexb-h264-v1"}
+//  2. Send binary frames: 1-byte flags + 8-byte pts-us + Annex-B AU bytes
+//     flags bit0 = keyframe
+func (s *Server) handleWSAnnexB(w http.ResponseWriter, r *http.Request) {
+	streamKey := chi.URLParam(r, "streamKey")
+
+	track := s.manager.Track(streamKey)
+	if track == nil {
+		http.Error(w, "stream not found", 404)
+		return
+	}
+
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("[ws-annexb] upgrade error: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	var codec string
+	var sps, pps, _ , _ []byte
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		codec, sps, pps, _ = track.Params()
+		if len(sps) > 0 {
+			break
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+		}
+	}
+
+	if codec != "h264" {
+		msg := map[string]string{
+			"error":  "codec_not_supported",
+			"detail": "annexb websocket currently supports only h264",
+		}
+		_ = conn.WriteMessage(websocket.TextMessage, mustJSON(msg))
+		return
+	}
+
+	info := struct {
+		Codec  string `json:"codec"`
+		Format string `json:"format"`
+	}{
+		Codec:  mux.CodecString(codec, sps),
+		Format: "annexb-h264-v1",
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, mustJSON(info)); err != nil {
+		return
+	}
+
+	ch := track.Subscribe()
+	defer track.Unsubscribe(ch)
+
+	waitKeyframe := true
+	for au := range ch {
+		if waitKeyframe {
+			if !au.Keyframe {
+				continue
+			}
+			waitKeyframe = false
+		}
+
+		payload := au.Data
+		if au.Keyframe {
+			_, curSPS, curPPS, _ := track.Params()
+			if len(curSPS) > 0 && !bytes.Contains(payload, curSPS) {
+				payload = prependNALUnits(payload, curSPS, curPPS)
+			}
+		}
+
+		if len(payload) == 0 {
+			continue
+		}
+
+		ptsUS := uint64(au.Timestamp) * 1000000 / 90000
+		frame := make([]byte, 9+len(payload))
+		if au.Keyframe {
+			frame[0] = 0x01
+		}
+		binary.BigEndian.PutUint64(frame[1:9], ptsUS)
+		copy(frame[9:], payload)
+
+		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if err := conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+			return
+		}
+	}
+}
+
+// handleWSAnnexBByID handles GET /ws/camera/{id}/annexb — looks up by camera ID.
+func (s *Server) handleWSAnnexBByID(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	cam, ok := s.store.Get(id)
+	if !ok {
+		http.Error(w, "camera not found", 404)
+		return
+	}
+
+	track := s.manager.Track(cam.StreamKey)
+	if track == nil {
+		http.Error(w, "stream not active — login first", 503)
+		return
+	}
+
+	r = r.WithContext(r.Context())
+	rctx := chi.RouteContext(r.Context())
+	rctx.URLParams.Add("streamKey", cam.StreamKey)
+	s.handleWSAnnexB(w, r)
+}
+
 // waitForTrack returns a *streaming.Track once it has params, or nil on timeout.
 func waitForTrack(track *streaming.Track, timeout time.Duration) *streaming.Track {
 	deadline := time.Now().Add(timeout)
@@ -168,4 +287,19 @@ func waitForTrack(track *streaming.Track, timeout time.Duration) *streaming.Trac
 func mustJSON(v any) []byte {
 	b, _ := json.Marshal(v)
 	return b
+}
+
+func prependNALUnits(payload, sps, pps []byte) []byte {
+	if len(sps) == 0 {
+		return payload
+	}
+	out := make([]byte, 0, len(payload)+16+len(sps)+len(pps))
+	out = append(out, 0x00, 0x00, 0x00, 0x01)
+	out = append(out, sps...)
+	if len(pps) > 0 {
+		out = append(out, 0x00, 0x00, 0x00, 0x01)
+		out = append(out, pps...)
+	}
+	out = append(out, payload...)
+	return out
 }

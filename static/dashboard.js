@@ -90,7 +90,7 @@ function setMode(mode) {
   document.getElementById('btn-table').classList.toggle('active', mode === 'table');
 }
 
-// ── MSE players ───────────────────────────────────────────────────────────────
+// ── Canvas/WebCodecs players ─────────────────────────────────────────────────
 
 function startPlayer(camId, streamKey) {
   const video = document.getElementById('video-' + camId);
@@ -98,7 +98,7 @@ function startPlayer(camId, streamKey) {
   if (players[camId]) { players[camId].destroy(); }
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const wsUrl = `${proto}://${location.host}/ws/stream/${streamKey}`;
+  const wsUrl = `${proto}://${location.host}/ws/annexb/${streamKey}`;
   players[camId] = new MSEPlayer(video, wsUrl, {
     fallbackUrl: '/proxy/cameras/' + camId + '/stream',
   });
@@ -135,11 +135,11 @@ function openModal(id, name, ip, key, health, rtsp, hasPTZ) {
     const img = document.getElementById('modal-img');
     if (img) img.src = '/proxy/cameras/' + id + '/stream';
   } else {
-    // MSE/WebSocket player.
+    // Canvas/WebCodecs player.
     const video = document.getElementById('modal-video');
     if (video && health !== 'offline' && health !== 'auth-failed' && health !== 'unknown') {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      modalPlayer = new MSEPlayer(video, `${proto}://${location.host}/ws/stream/${key}`, {
+      modalPlayer = new MSEPlayer(video, `${proto}://${location.host}/ws/annexb/${key}`, {
         fallbackUrl: '/proxy/cameras/' + id + '/stream',
       });
     }
