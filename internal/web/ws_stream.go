@@ -176,11 +176,11 @@ func (s *Server) handleWSAnnexB(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	var codec string
-	var sps, pps, _ , _ []byte
+	var sps []byte
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		codec, sps, pps, _ = track.Params()
+		codec, sps, _, _ = track.Params()
 		if len(sps) > 0 {
 			break
 		}
