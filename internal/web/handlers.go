@@ -173,7 +173,7 @@ func (s *Server) apiLogin(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "not found", 404)
 		return
 	}
-	sess, err := auth.Login(cam.IP, cam.Port, body.Username, body.Password)
+	sess, err := auth.LoginWithFallback(cam.IP, cam.Port, body.Username, body.Password)
 	if err != nil {
 		jsonError(w, fmt.Sprintf("auth failed: %v", err), 401)
 		return
@@ -198,7 +198,7 @@ func (s *Server) apiRestart(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "no credentials stored", 400)
 		return
 	}
-	sess, err := auth.Login(cam.IP, cam.Port, cam.Username, cam.Password)
+	sess, err := auth.LoginWithFallback(cam.IP, cam.Port, cam.Username, cam.Password)
 	if err != nil {
 		jsonError(w, fmt.Sprintf("re-auth failed: %v", err), 401)
 		return
