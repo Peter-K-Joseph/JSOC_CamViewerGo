@@ -2,8 +2,8 @@ package streaming
 
 import (
 	"bufio"
-	"encoding/base64"
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"log"
