@@ -3,6 +3,7 @@ package auth
 import (
 	"bufio"
 	"crypto/md5"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -23,6 +24,10 @@ func LoginWithFallback(host string, port int, username, password string) (*Sessi
 		return sess, nil
 	}
 	rpcErr := err
+	var rejected *AuthRejectedError
+	if errors.As(err, &rejected) {
+		return nil, fmt.Errorf("rpc2 auth failed: %w", rejected)
+	}
 
 	normalizedHost, normalizedPort, normErr := netutil.NormalizeHostPort(host, port)
 	if normErr != nil {

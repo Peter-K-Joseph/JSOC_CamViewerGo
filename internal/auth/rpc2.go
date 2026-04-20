@@ -49,6 +49,26 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
+type AuthRejectedError struct {
+	Code             int
+	Message          string
+	RemainLockSecond int
+	RemainLoginTimes int
+}
+
+func (e *AuthRejectedError) Error() string {
+	detail := e.Message
+	if detail == "" {
+		detail = "camera rejected credentials"
+	}
+	if e.RemainLockSecond > 0 {
+		return fmt.Sprintf("%s (code %d / 0x%X, locked for %d seconds, remaining attempts %d)",
+			detail, e.Code, e.Code, e.RemainLockSecond, e.RemainLoginTimes)
+	}
+	return fmt.Sprintf("%s (code %d / 0x%X, remaining attempts %d)",
+		detail, e.Code, e.Code, e.RemainLoginTimes)
+}
+
 // Login performs the two-stage Dahua RPC2 MD5 challenge-response authentication.
 func Login(host string, port int, username, password string) (*Session, error) {
 	var err error
@@ -131,10 +151,10 @@ func Login(host string, port int, username, password string) (*Session, error) {
 		return nil, fmt.Errorf("rpc2 login: %w", err)
 	}
 	if resp2.Error != nil && resp2.Error.Code != 0 {
+		rejected := authRejected(resp2)
 		log.Printf("[auth] rpc2 login rejected by %s: code=%d hex=0x%X message=%q raw=%s",
 			base, resp2.Error.Code, resp2.Error.Code, resp2.Error.Message, truncateLog(resp2.raw, 1000))
-		return nil, fmt.Errorf("rpc2 auth failed: %s (code %d / 0x%X)",
-			resp2.Error.Message, resp2.Error.Code, resp2.Error.Code)
+		return nil, rejected
 	}
 	if ok, present := resultBool(resp2.Result); present && !ok {
 		log.Printf("[auth] rpc2 login returned result=false from %s: raw=%s",
@@ -184,6 +204,18 @@ func doRPC(client *http.Client, endpoint string, req rpcRequest) (*rpcResponse, 
 
 func intParam(params map[string]any, key string) int {
 	return intSession(params[key])
+}
+
+func authRejected(resp *rpcResponse) *AuthRejectedError {
+	err := &AuthRejectedError{
+		Code:    resp.Error.Code,
+		Message: resp.Error.Message,
+	}
+	if resp.Params != nil {
+		err.RemainLockSecond = intParam(resp.Params, "remainLockSecond")
+		err.RemainLoginTimes = intParam(resp.Params, "remainLoginTimes")
+	}
+	return err
 }
 
 func intSession(value any) int {
