@@ -83,8 +83,8 @@ func (s *Server) buildRouter(staticFS http.FileSystem) *chi.Mux {
 		r.Get("/cameras/{id}/direct", s.handleDirectPage)
 
 		// ── WebSocket streams ─────────────────────────────────────────────────
-		r.Get("/ws/stream/{streamKey}", s.handleWSStream)
-		r.Get("/ws/camera/{id}", s.handleWSStreamByID)
+		r.Get("/ws/stream/{streamKey}", s.handleWSAnnexB)
+		r.Get("/ws/camera/{id}", s.handleWSAnnexBByID)
 		r.Get("/ws/annexb/{streamKey}", s.handleWSAnnexB)
 		r.Get("/ws/camera/{id}/annexb", s.handleWSAnnexBByID)
 
