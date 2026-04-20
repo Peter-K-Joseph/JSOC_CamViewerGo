@@ -2,6 +2,7 @@ package streaming
 
 import (
 	"bufio"
+	"encoding/base64"
 	"bytes"
 	"encoding/binary"
 	"fmt"
@@ -129,6 +130,10 @@ func (s *WsSource) runOnce() error {
 
 	codec, payloadType, clockRate := parseSDPCodec(descResp)
 	log.Printf("[ws_source] codec=%s pt=%d clock=%d", codec, payloadType, clockRate)
+	if sps, pps, vps := parseSDPParameterSets(descResp); len(sps) > 0 || len(pps) > 0 || len(vps) > 0 {
+		s.track.UpdateParams(codec, sps, pps, vps)
+		log.Printf("[ws_source] seeded codec params from SDP: sps=%d pps=%d vps=%d", len(sps), len(pps), len(vps))
+	}
 
 	// SETUP — use the track control URL from the SDP; fall back to /trackID=0.
 	setupURL := sdpTrackControl(descResp, rtspStreamURL)
@@ -358,6 +363,46 @@ func parseSDPCodec(sdp string) (codec string, payloadType uint8, clockRate uint3
 				codec = "h265"
 			} else {
 				codec = "h264"
+			}
+		}
+	}
+	return
+}
+
+func parseSDPParameterSets(sdp string) (sps, pps, vps []byte) {
+	for _, line := range strings.Split(sdp, "\n") {
+		line = strings.TrimSpace(strings.TrimRight(line, "\r"))
+		if !strings.HasPrefix(strings.ToLower(line), "a=fmtp:") {
+			continue
+		}
+		params := line
+		for _, field := range strings.Split(params, ";") {
+			field = strings.TrimSpace(field)
+			lower := strings.ToLower(field)
+			switch {
+			case strings.HasPrefix(lower, "sprop-sps="):
+				if decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(field[len("sprop-sps="):])); err == nil {
+					sps = decoded
+				}
+			case strings.HasPrefix(lower, "sprop-pps="):
+				if decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(field[len("sprop-pps="):])); err == nil {
+					pps = decoded
+				}
+			case strings.HasPrefix(lower, "sprop-vps="):
+				if decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(field[len("sprop-vps="):])); err == nil {
+					vps = decoded
+				}
+			case strings.HasPrefix(lower, "sprop-parameter-sets="):
+				values := strings.TrimSpace(field[len("sprop-parameter-sets="):])
+				parts := strings.Split(values, ",")
+				if len(parts) >= 2 {
+					if decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(parts[0])); err == nil {
+						sps = decoded
+					}
+					if decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(parts[1])); err == nil {
+						pps = decoded
+					}
+				}
 			}
 		}
 	}
