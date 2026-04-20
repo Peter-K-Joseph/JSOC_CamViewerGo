@@ -102,19 +102,25 @@ func (s *WsSource) runOnce() error {
 	// ── RTSP handshake over WS ──
 	cseq := 1
 
+	// Embed credentials in the RTSP URL so the camera can auth the stream
+	// independently of the WebSocket upgrade headers (mirrors Python behaviour).
+	rtspURL := fmt.Sprintf("rtsp://%s:%s@%s:%d/cam/realmonitor?channel=%d&subtype=%d",
+		rtspEscape(s.username), rtspEscape(s.password), s.host, s.port, s.channel, s.subtype)
+	baseURL := fmt.Sprintf("rtsp://%s:%d/", s.host, s.port)
+
 	// OPTIONS
 	if err := s.sendRTSP(conn, cseq, fmt.Sprintf(
-		"OPTIONS rtsp://%s:%d/ RTSP/1.0\r\nCSeq: %d\r\n\r\n", s.host, s.port, cseq)); err != nil {
+		"OPTIONS %s RTSP/1.0\r\nCSeq: %d\r\n\r\n", baseURL, cseq)); err != nil {
 		return err
 	}
-	if _, err := s.readRTSP(conn); err != nil {
+	optResp, err := s.readRTSP(conn)
+	if err != nil {
 		return fmt.Errorf("OPTIONS response: %w", err)
 	}
+	log.Printf("[ws_source] OPTIONS: %s", rtspStatusLine(optResp))
 	cseq++
 
 	// DESCRIBE
-	rtspURL := fmt.Sprintf("rtsp://%s:%d/cam/realmonitor?channel=%d&subtype=%d",
-		s.host, s.port, s.channel, s.subtype)
 	if err := s.sendRTSP(conn, cseq, fmt.Sprintf(
 		"DESCRIBE %s RTSP/1.0\r\nCSeq: %d\r\nAccept: application/sdp\r\n\r\n",
 		rtspURL, cseq)); err != nil {
@@ -124,6 +130,10 @@ func (s *WsSource) runOnce() error {
 	if err != nil {
 		return fmt.Errorf("DESCRIBE response: %w", err)
 	}
+	log.Printf("[ws_source] DESCRIBE: %s", rtspStatusLine(descResp))
+	if code := rtspStatusCode(descResp); code != 200 {
+		return fmt.Errorf("DESCRIBE: status %d", code)
+	}
 	cseq++
 
 	codec, payloadType, clockRate := parseSDPCodec(descResp)
@@ -131,6 +141,7 @@ func (s *WsSource) runOnce() error {
 
 	// SETUP — use the track control URL from the SDP; fall back to /trackID=0.
 	setupURL := sdpTrackControl(descResp, rtspURL)
+	log.Printf("[ws_source] SETUP url=%s", setupURL)
 	if err := s.sendRTSP(conn, cseq, fmt.Sprintf(
 		"SETUP %s RTSP/1.0\r\nCSeq: %d\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n",
 		setupURL, cseq)); err != nil {
@@ -139,6 +150,10 @@ func (s *WsSource) runOnce() error {
 	setupResp, err := s.readRTSP(conn)
 	if err != nil {
 		return fmt.Errorf("SETUP response: %w", err)
+	}
+	log.Printf("[ws_source] SETUP: %s", rtspStatusLine(setupResp))
+	if code := rtspStatusCode(setupResp); code != 200 {
+		return fmt.Errorf("SETUP: status %d", code)
 	}
 	sessionID := parseSession(setupResp)
 	cseq++
@@ -149,8 +164,13 @@ func (s *WsSource) runOnce() error {
 		rtspURL, cseq, sessionID)); err != nil {
 		return err
 	}
-	if _, err := s.readRTSP(conn); err != nil {
+	playResp, err := s.readRTSP(conn)
+	if err != nil {
 		return fmt.Errorf("PLAY response: %w", err)
+	}
+	log.Printf("[ws_source] PLAY: %s", rtspStatusLine(playResp))
+	if code := rtspStatusCode(playResp); code != 200 {
+		return fmt.Errorf("PLAY: status %d", code)
 	}
 	cseq++
 
@@ -347,6 +367,41 @@ func sdpTrackControl(sdp, baseURL string) string {
 		}
 	}
 	return baseURL + "/trackID=0"
+}
+
+// rtspEscape percent-encodes characters that are not safe in an RTSP URL userinfo field.
+func rtspEscape(s string) string {
+	var out strings.Builder
+	for _, b := range []byte(s) {
+		if (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') ||
+			b == '-' || b == '_' || b == '.' || b == '~' {
+			out.WriteByte(b)
+		} else {
+			fmt.Fprintf(&out, "%%%02X", b)
+		}
+	}
+	return out.String()
+}
+
+// rtspStatusLine returns the first line of an RTSP response for logging.
+func rtspStatusLine(resp string) string {
+	if idx := strings.Index(resp, "\r\n"); idx >= 0 {
+		return resp[:idx]
+	}
+	return strings.TrimSpace(resp)
+}
+
+// rtspStatusCode parses the numeric status code from an RTSP response line.
+func rtspStatusCode(resp string) int {
+	line := rtspStatusLine(resp)
+	// "RTSP/1.0 200 OK"
+	parts := strings.Fields(line)
+	if len(parts) < 2 {
+		return 0
+	}
+	var code int
+	fmt.Sscanf(parts[1], "%d", &code)
+	return code
 }
 
 func parseSession(resp string) string {
