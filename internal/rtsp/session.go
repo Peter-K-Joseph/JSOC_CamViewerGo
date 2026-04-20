@@ -16,7 +16,7 @@ import (
 type sessionState int
 
 const (
-	stateInit    sessionState = iota
+	stateInit sessionState = iota
 	stateReady
 	statePlaying
 )
@@ -337,4 +337,3 @@ func splitAnnexB(data []byte) [][]byte {
 	}
 	return nals
 }
-
