@@ -8,9 +8,11 @@ import (
 	"crypto/sha1" //nolint:gosec // ONVIF WS-Security mandates SHA1
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -45,8 +47,11 @@ func wsseHeader(username, password string) string {
 }
 
 func soapEnvelope(header, body string) string {
+	// Use SOAP 1.1 envelope namespace.  Dahua firmware (and most IP cameras)
+	// only accept SOAP 1.1 — sending the SOAP 1.2 namespace causes an
+	// immediate connection close (EOF) without any HTTP response.
 	return `<?xml version="1.0" encoding="UTF-8"?>
-<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope"
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
             xmlns:tds="http://www.onvif.org/ver10/device/wsdl"
             xmlns:trt="http://www.onvif.org/ver10/media/wsdl"
             xmlns:tptz="http://www.onvif.org/ver20/ptz/wsdl"
@@ -64,8 +69,9 @@ func (c *Client) soapCall(url, action, body string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", fmt.Sprintf(`application/soap+xml; charset=utf-8; action="%s"`, action))
-	req.Header.Set("SOAPAction", action)
+	// SOAP 1.1: Content-Type is text/xml; the action goes in the SOAPAction header.
+	req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	req.Header.Set("SOAPAction", fmt.Sprintf(`"%s"`, action))
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
@@ -116,6 +122,41 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
+// isDefinitiveError returns true when the error is a clear server-side
+// rejection (auth failure, SOAP fault, bad request) rather than a routing /
+// connectivity issue that might resolve on a different path.
+func isDefinitiveError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	// Auth errors and explicit SOAP faults are definitive.
+	if strings.Contains(msg, "HTTP 401") ||
+		strings.Contains(msg, "HTTP 403") ||
+		strings.Contains(msg, "SOAP fault") {
+		return true
+	}
+	// A network-level error (EOF, connection refused, timeout) means the path
+	// either doesn't exist or the server closed the connection — keep trying.
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return false
+	}
+	// HTTP 404 / 405 → try the next path.
+	if strings.Contains(msg, "HTTP 404") || strings.Contains(msg, "HTTP 405") {
+		return false
+	}
+	// HTTP 4xx other than 401/403 — could be a routing 400; keep trying.
+	if strings.Contains(msg, "HTTP 4") {
+		return false
+	}
+	// HTTP 5xx — server error; keep trying other paths.
+	if strings.Contains(msg, "HTTP 5") {
+		return false
+	}
+	return true
+}
+
 // ── Client ───────────────────────────────────────────────────────────────────
 
 // Client is an authenticated ONVIF client for one camera.
@@ -164,8 +205,10 @@ func Probe(ip string, port int, username, password string) (*Client, error) {
 		if lastErr == nil {
 			break
 		}
-		// Only try the next path for 404 — auth failures and SOAP faults are definitive.
-		if !strings.Contains(lastErr.Error(), "HTTP 404") {
+		// Continue to the next path for transient / routing errors.
+		// Stop immediately only on auth failures or SOAP faults — those are
+		// definitive answers from the server regardless of path.
+		if isDefinitiveError(lastErr) {
 			break
 		}
 	}
