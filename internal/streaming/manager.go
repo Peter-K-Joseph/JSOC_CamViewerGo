@@ -7,27 +7,36 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jsoc/camviewer/internal/settings"
 	"github.com/jsoc/camviewer/internal/store"
 )
+
+// cameraSource is implemented by WsSource and RtspSource.
+type cameraSource interface {
+	Run()
+	Stop()
+}
 
 // Manager owns all per-camera stream goroutines and their tracks.
 type Manager struct {
 	mu                sync.RWMutex
-	streams           map[string]*streamEntry // keyed by camera ID
+	streams           map[string]*streamEntry
 	keepaliveInterval time.Duration
+	settings          *settings.Store // nil → default to WS
 }
 
 type streamEntry struct {
 	track   *Track
-	source  *WsSource
+	source  cameraSource
 	health  store.StreamHealth
 	cookies []*http.Cookie
 }
 
-func NewManager(keepaliveInterval time.Duration) *Manager {
+func NewManager(keepaliveInterval time.Duration, st *settings.Store) *Manager {
 	return &Manager{
 		streams:           make(map[string]*streamEntry),
 		keepaliveInterval: keepaliveInterval,
+		settings:          st,
 	}
 }
 
@@ -36,18 +45,13 @@ func (m *Manager) Start(cam *store.Camera, cookies []*http.Cookie) {
 	m.Stop(cam.ID)
 
 	track := NewTrack(cam.StreamKey)
-	source := NewWsSource(
-		cam.IP, cam.Port,
-		cam.Username, cam.Password,
-		cookies,
-		cam.Channel, cam.Subtype,
-		track,
-		m.keepaliveInterval,
-	)
+
+	// Select source based on current settings.
+	src := m.buildSource(cam, cookies, track)
 
 	entry := &streamEntry{
 		track:   track,
-		source:  source,
+		source:  src,
 		health:  store.HealthStarting,
 		cookies: cookies,
 	}
@@ -58,7 +62,7 @@ func (m *Manager) Start(cam *store.Camera, cookies []*http.Cookie) {
 
 	go func() {
 		m.setHealth(cam.ID, store.HealthStarting)
-		source.Run() // blocks until Stop() called or permanent error
+		src.Run() // blocks until Stop() called or permanent error
 		m.setHealth(cam.ID, store.HealthOffline)
 	}()
 
@@ -73,7 +77,7 @@ func (m *Manager) Start(cam *store.Camera, cookies []*http.Cookie) {
 		}
 	}()
 
-	log.Printf("[manager] started stream for camera %s (%s)", cam.ID, cam.Name)
+	log.Printf("[manager] started stream for camera %s (%s) via %s", cam.ID, cam.Name, m.activeProtocol())
 }
 
 // Stop halts the stream for a camera.
@@ -88,6 +92,24 @@ func (m *Manager) Stop(id string) {
 	if ok && entry.source != nil {
 		entry.source.Stop()
 		log.Printf("[manager] stopped stream for camera %s", id)
+	}
+}
+
+// StopAll halts every active stream (used when switching to direct mode at runtime).
+func (m *Manager) StopAll() {
+	m.mu.Lock()
+	entries := make(map[string]*streamEntry, len(m.streams))
+	for k, v := range m.streams {
+		entries[k] = v
+	}
+	m.streams = make(map[string]*streamEntry)
+	m.mu.Unlock()
+
+	for id, e := range entries {
+		if e.source != nil {
+			e.source.Stop()
+			log.Printf("[manager] stopped stream for camera %s (stop-all)", id)
+		}
 	}
 }
 
@@ -124,4 +146,42 @@ func (m *Manager) setHealth(id string, h store.StreamHealth) {
 		e.health = h
 	}
 	m.mu.Unlock()
+}
+
+// buildSource creates the appropriate source type based on the current settings.
+func (m *Manager) buildSource(cam *store.Camera, cookies []*http.Cookie, track *Track) cameraSource {
+	proto := settings.ProtocolWS
+	if m.settings != nil {
+		proto = m.settings.Get().StreamProtocol
+	}
+
+	switch proto {
+	case settings.ProtocolRTSP:
+		return NewRtspSource(
+			cam.IP, 554,
+			cam.Username, cam.Password,
+			cam.Channel, cam.Subtype,
+			track, m.keepaliveInterval,
+		)
+	case settings.ProtocolRTMP:
+		// RTMP is camera-push only — not implementable as a pull source.
+		// Fall back to WS and log a warning.
+		log.Printf("[manager] RTMP pull not supported; using WS for camera %s", cam.Name)
+		fallthrough
+	default: // ProtocolWS
+		return NewWsSource(
+			cam.IP, cam.Port,
+			cam.Username, cam.Password,
+			cookies,
+			cam.Channel, cam.Subtype,
+			track, m.keepaliveInterval,
+		)
+	}
+}
+
+func (m *Manager) activeProtocol() settings.Protocol {
+	if m.settings != nil {
+		return m.settings.Get().StreamProtocol
+	}
+	return settings.ProtocolWS
 }

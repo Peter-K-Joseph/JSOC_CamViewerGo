@@ -8,7 +8,9 @@ import (
 
 	"github.com/jsoc/camviewer/internal/config"
 	"github.com/jsoc/camviewer/internal/netutil"
+	"github.com/jsoc/camviewer/internal/ptz"
 	"github.com/jsoc/camviewer/internal/rtsp"
+	"github.com/jsoc/camviewer/internal/settings"
 	"github.com/jsoc/camviewer/internal/store"
 	"github.com/jsoc/camviewer/internal/streaming"
 	"github.com/jsoc/camviewer/internal/web"
@@ -21,20 +23,43 @@ func main() {
 		log.Fatalf("create data dir: %v", err)
 	}
 
+	// ── Persistent stores ─────────────────────────────────────────────────────
 	st, err := store.New(cfg.DataDir)
 	if err != nil {
 		log.Fatalf("open store: %v", err)
 	}
 
-	mgr := streaming.NewManager(time.Duration(cfg.NativeWSKeepaliveInterval * float64(time.Second)))
+	sett, err := settings.New(cfg.DataDir)
+	if err != nil {
+		log.Fatalf("open settings: %v", err)
+	}
 
+	// ── Streaming manager ─────────────────────────────────────────────────────
+	mgr := streaming.NewManager(
+		time.Duration(cfg.NativeWSKeepaliveInterval*float64(time.Second)),
+		sett,
+	)
+	ptzMgr := ptz.NewManager()
+
+	// ── Start camera streams (skipped in direct-stream mode) ──────────────────
+	currentSettings := sett.Get()
 	for _, cam := range st.List() {
 		if cam.Username != "" && cam.Password != "" && cam.Enabled {
-			go mgr.Start(cam, nil)
+			if !currentSettings.DirectStreamMode {
+				go mgr.Start(cam, nil)
+			}
+		}
+		// Restore PTZ clients for cameras that had ONVIF configured previously.
+		if cam.PTZEnabled && cam.ONVIFUsername != "" {
+			go func(c *store.Camera) {
+				if err := ptzMgr.Load(c.ID, c.IP, c.Port, c.ONVIFUsername, c.ONVIFPassword); err != nil {
+					log.Printf("[ptz] restore %s (%s): %v", c.Name, c.IP, err)
+				}
+			}(cam)
 		}
 	}
 
-	// Bind both servers before starting either, so we know the actual ports.
+	// ── Bind both servers before starting either ───────────────────────────────
 	rtspLn, rtspPort, err := netutil.ListenTCP("0.0.0.0", cfg.RTSPPort)
 	if err != nil {
 		log.Fatalf("rtsp bind: %v", err)
@@ -59,10 +84,18 @@ func main() {
 	}()
 
 	staticFS := http.Dir("static")
-	webSrv := web.NewServer(st, mgr, cfg.RTSPHost, rtspPort, cfg.StreamPathPrefix, staticFS)
+	webSrv := web.NewServer(
+		st, mgr, ptzMgr, sett,
+		cfg.AdminPassword,
+		cfg.RTSPHost, rtspPort, cfg.StreamPathPrefix,
+		staticFS,
+	)
 
 	log.Printf("[jsoc] HTTP → http://%s:%d", cfg.HTTPHost, httpPort)
 	log.Printf("[jsoc] Data → %s", cfg.DataDir)
+	if currentSettings.DirectStreamMode {
+		log.Printf("[jsoc] Direct stream mode active — server pipeline disabled")
+	}
 
 	if err := http.Serve(httpLn, webSrv.Handler()); err != nil {
 		log.Fatalf("http serve: %v", err)

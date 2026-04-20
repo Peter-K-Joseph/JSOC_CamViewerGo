@@ -418,8 +418,189 @@ input:focus { border-color: var(--accent2); box-shadow: 0 0 0 2px rgba(59,130,24
 .login-field input { width: 100%; }
 .login-error { font-size: 0.8rem; color: var(--danger); min-height: 1.2rem; }
 
+/* ── Login extras ─────────────────────────────────────────────────────────── */
+.login-divider {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text3);
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
 /* ── Scan results ─────────────────────────────────────────────────────────── */
 .scan-status { font-size: 0.85rem; color: var(--text2); margin-bottom: 0.75rem; min-height: 1.4rem; }
+
+/* ── PTZ panel ────────────────────────────────────────────────────────────── */
+.ptz-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  padding: 0.6rem 1rem;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.ptz-section { display: flex; align-items: center; gap: 0.5rem; }
+.ptz-side    { flex-direction: row; align-items: flex-start; gap: 1rem; }
+
+.ptz-dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 34px);
+  grid-template-rows:    repeat(3, 34px);
+  gap: 3px;
+}
+
+.ptz-btn {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background 0.1s, border-color 0.1s;
+}
+.ptz-btn:hover  { background: var(--surface3); border-color: var(--accent2); }
+.ptz-btn:active { background: var(--accent);   border-color: var(--accent);  color: #fff; }
+
+.ptz-stop {
+  background: var(--surface3);
+  color: var(--text2);
+  font-size: 0.65rem;
+}
+
+.ptz-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.ptz-label {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text3);
+  margin-bottom: 1px;
+}
+.ptz-focus-auto {
+  width: auto;
+  padding: 0 0.5rem;
+  font-size: 0.68rem;
+  color: var(--accent3);
+  border-color: var(--accent);
+}
+
+/* ── MJPEG inline image (direct stream mode) ──────────────────────────────── */
+.cam-mjpeg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ── Popup-blocked banner ─────────────────────────────────────────────────── */
+.popup-blocked-msg {
+  position: absolute;
+  bottom: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(239,68,68,.9);
+  color: #fff;
+  font-size: 0.72rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ── Preferences page ─────────────────────────────────────────────────────── */
+.pref-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 1rem;
+}
+.pref-section-title {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text3);
+  margin-bottom: 0.75rem;
+}
+.pref-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 0;
+  border-top: 1px solid var(--border);
+}
+.pref-row:first-of-type { border-top: none; }
+.pref-indent { padding-left: 1.2rem; }
+.pref-label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.84rem; color: var(--text); }
+.pref-desc  { font-size: 0.73rem; color: var(--text3); line-height: 1.4; }
+
+/* ── Toggle switch ────────────────────────────────────────────────────────── */
+.toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: pointer;
+  width: 40px;
+  height: 22px;
+}
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 22px;
+  transition: background .2s;
+}
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text3);
+  transition: transform .2s, background .2s;
+}
+.toggle input:checked + .toggle-slider { background: var(--accent); border-color: var(--accent); }
+.toggle input:checked + .toggle-slider::before {
+  transform: translateY(-50%) translateX(18px);
+  background: #fff;
+}
+
+/* ── Radio rows ───────────────────────────────────────────────────────────── */
+.radio-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.radio-row input[type="radio"] { accent-color: var(--accent); }
 
 /* ── Misc ─────────────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }

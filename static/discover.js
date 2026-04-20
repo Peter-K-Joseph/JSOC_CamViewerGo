@@ -27,15 +27,7 @@ async function scan() {
 
     status.textContent = `Found ${devices.length} device(s).`;
     for (const d of devices) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td class="mono">${d.ip}</td>
-        <td>${d.port}</td>
-        <td>${d.manufacturer || '<span class="text-muted">—</span>'}</td>
-        <td>${d.model || '<span class="text-muted">—</span>'}</td>
-        <td><button class="btn btn-sm" onclick="addDevice('${d.ip}',${d.port},'${esc(d.manufacturer)}','${esc(d.model)}',this)">Add</button></td>
-      `;
-      tbody.appendChild(tr);
+      tbody.appendChild(makeRow(d));
     }
     table.classList.remove('hidden');
   } catch (ex) {
@@ -46,7 +38,52 @@ async function scan() {
   }
 }
 
-async function addDevice(ip, port, manufacturer, model, btn) {
+// Build a table row safely — no innerHTML; all untrusted values via textContent.
+function makeRow(d) {
+  const tr = document.createElement('tr');
+
+  const tdIP = document.createElement('td');
+  tdIP.className = 'mono';
+  tdIP.textContent = d.ip;
+  tr.appendChild(tdIP);
+
+  const tdPort = document.createElement('td');
+  tdPort.textContent = String(d.port);
+  tr.appendChild(tdPort);
+
+  tr.appendChild(makeOptionalCell(d.manufacturer));
+  tr.appendChild(makeOptionalCell(d.model));
+
+  // Add button — device data stored in data-* attributes, never interpolated into HTML.
+  const addBtn = document.createElement('button');
+  addBtn.className = 'btn btn-sm';
+  addBtn.textContent = 'Add';
+  addBtn.dataset.ip           = d.ip;
+  addBtn.dataset.port         = String(d.port);
+  addBtn.dataset.manufacturer = d.manufacturer || '';
+  addBtn.dataset.model        = d.model || '';
+  addBtn.addEventListener('click', function () { addDevice(this); });
+
+  const tdAction = document.createElement('td');
+  tdAction.appendChild(addBtn);
+  tr.appendChild(tdAction);
+
+  return tr;
+}
+
+function makeOptionalCell(value) {
+  const td = document.createElement('td');
+  td.textContent = value || '—';
+  if (!value) td.className = 'text-muted';
+  return td;
+}
+
+async function addDevice(btn) {
+  const ip           = btn.dataset.ip;
+  const port         = parseInt(btn.dataset.port, 10);
+  const manufacturer = btn.dataset.manufacturer;
+  const model        = btn.dataset.model;
+
   const defaultName = manufacturer ? `${manufacturer} ${ip}` : ip;
   const name = prompt('Camera name:', defaultName);
   if (!name) return;
@@ -71,5 +108,3 @@ async function addDevice(ip, port, manufacturer, model, btn) {
     btn.disabled = false;
   }
 }
-
-function esc(s) { return (s || '').replace(/'/g, "\\'"); }

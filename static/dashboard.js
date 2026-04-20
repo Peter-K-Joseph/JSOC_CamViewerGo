@@ -3,14 +3,25 @@
 let currentGrid = 2;
 let currentMode = 'grid';
 let modalPlayer = null;
-let modalCamId = null;  // ID of the camera currently shown in the modal
-const players = {};    // cameraID → MSEPlayer
+let modalCamId  = null;   // ID of the camera currently shown in the modal
+let ptzVisible  = false;
+const players   = {};     // cameraID → MSEPlayer
 
 function initDashboard(cameras) {
-  // Start MSE players for cameras that have credentials.
-  for (const cam of cameras) {
-    if (cam.hasCreds && cam.health !== 'offline') {
-      startPlayer(cam.id, cam.key);
+  // In direct-windowed mode wire cell clicks to open popup windows.
+  if (typeof DIRECT_WINDOWED !== 'undefined' && DIRECT_WINDOWED) {
+    document.querySelectorAll('.cam-cell:not(.empty)').forEach(cell => {
+      cell.style.cursor = 'pointer';
+      cell.addEventListener('click', () => openDirectWindow(cell.dataset.id));
+    });
+  }
+
+  // Start MSE players only when NOT in direct stream mode.
+  if (typeof DIRECT_MODE === 'undefined' || !DIRECT_MODE) {
+    for (const cam of cameras) {
+      if (cam.hasCreds && cam.health !== 'offline') {
+        startPlayer(cam.id, cam.key);
+      }
     }
   }
 
@@ -25,6 +36,33 @@ function initDashboard(cameras) {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeModal();
   });
+
+  // Wire PTZ D-pad and zoom buttons (mousedown = start, mouseup/leave = stop).
+  wirePTZButtons();
+}
+
+// ── Direct-window mode ────────────────────────────────────────────────────────
+
+function openDirectWindow(camId) {
+  if (!camId) return;
+  const url = '/cameras/' + camId + '/direct';
+  const w = window.open(url, 'jsoc-direct-' + camId,
+    'noopener,width=1280,height=720');
+  if (!w) {
+    // Popup was blocked — show transient banner on the camera cell.
+    const cell = document.getElementById('cell-' + camId);
+    if (cell) {
+      let banner = cell.querySelector('.popup-blocked-msg');
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.className = 'popup-blocked-msg';
+        banner.textContent = 'Open failed — please allow popups for this site';
+        cell.appendChild(banner);
+      }
+      clearTimeout(banner._timer);
+      banner._timer = setTimeout(() => banner.remove(), 5000);
+    }
+  }
 }
 
 // ── Grid size ────────────────────────────────────────────────────────────────
@@ -66,14 +104,21 @@ function startPlayer(camId, streamKey) {
 
 // ── Fullscreen modal ──────────────────────────────────────────────────────────
 
-function openModal(id, name, ip, key, health, rtsp) {
+function openModal(id, name, ip, key, health, rtsp, hasPTZ) {
   const modal = document.getElementById('modal');
-  const video = document.getElementById('modal-video');
+  if (!modal) return; // not rendered in windowed direct mode
 
   modalCamId = id;
+  ptzVisible = false;
+  document.getElementById('ptz-panel') && document.getElementById('ptz-panel').classList.add('hidden');
+
   document.getElementById('modal-title').textContent = name;
   document.getElementById('modal-meta').textContent  = ip;
   document.getElementById('modal-rtsp').textContent  = rtsp || '—';
+
+  // Show/hide PTZ toggle button.
+  const ptzBtn = document.getElementById('ptz-toggle-btn');
+  if (ptzBtn) ptzBtn.classList.toggle('hidden', !hasPTZ);
 
   // Destroy previous modal player.
   if (modalPlayer) { modalPlayer.destroy(); modalPlayer = null; }
@@ -81,19 +126,43 @@ function openModal(id, name, ip, key, health, rtsp) {
   modal.classList.remove('hidden');
   document.body.style.overflow = 'hidden';
 
-  if (health !== 'offline' && health !== 'auth-failed' && health !== 'unknown') {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    modalPlayer = new MSEPlayer(video, `${proto}://${location.host}/ws/stream/${key}`);
+  const directMode = typeof DIRECT_MODE !== 'undefined' && DIRECT_MODE;
+
+  if (directMode) {
+    // Show MJPEG stream in modal image.
+    const img = document.getElementById('modal-img');
+    if (img) img.src = '/proxy/cameras/' + id + '/stream';
+  } else {
+    // MSE/WebSocket player.
+    const video = document.getElementById('modal-video');
+    if (video && health !== 'offline' && health !== 'auth-failed' && health !== 'unknown') {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      modalPlayer = new MSEPlayer(video, `${proto}://${location.host}/ws/stream/${key}`);
+    }
   }
 }
 
 function closeModal() {
-  document.getElementById('modal').classList.add('hidden');
+  const modal = document.getElementById('modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
   document.body.style.overflow = '';
   if (modalPlayer) { modalPlayer.destroy(); modalPlayer = null; }
+
   const video = document.getElementById('modal-video');
-  video.src = '';
+  if (video) video.src = '';
+  const img = document.getElementById('modal-img');
+  if (img) img.src = '';
+
   modalCamId = null;
+  ptzVisible = false;
+  const ptzPanel = document.getElementById('ptz-panel');
+  if (ptzPanel) ptzPanel.classList.add('hidden');
+}
+
+function copyRTSP() {
+  const url = document.getElementById('modal-rtsp').textContent;
+  if (url && url !== '—') navigator.clipboard.writeText(url);
 }
 
 async function deleteModalCam() {
@@ -114,21 +183,67 @@ async function deleteModalCam() {
     return;
   }
 
-  // Stop and remove grid cell
+  // Stop and remove grid cell.
   if (players[id]) { players[id].destroy(); delete players[id]; }
   const cell = document.getElementById('cell-' + id);
   if (cell) cell.remove();
 
-  // Remove table row if present
+  // Remove table row if present.
   const row = document.getElementById('row-' + id);
   if (row) row.remove();
 
   closeModal();
 }
 
-function copyRTSP() {
-  const url = document.getElementById('modal-rtsp').textContent;
-  if (url && url !== '—') navigator.clipboard.writeText(url);
+// ── PTZ controls ──────────────────────────────────────────────────────────────
+
+function togglePTZ() {
+  ptzVisible = !ptzVisible;
+  document.getElementById('ptz-panel').classList.toggle('hidden', !ptzVisible);
+  document.getElementById('ptz-toggle-btn').classList.toggle('active', ptzVisible);
+}
+
+async function ptzSend(body) {
+  if (!modalCamId) return;
+  try {
+    await fetch('/api/cameras/' + modalCamId + '/ptz', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (_) {}
+}
+
+function ptzStop()      { ptzSend({ action: 'stop' }); }
+function ptzFocusStop() { ptzSend({ action: 'focus-stop' }); }
+function ptzFocusAuto() { ptzSend({ action: 'focus-auto' }); }
+
+// Wire directional + zoom buttons: hold = continuous move, release = stop.
+function wirePTZButtons() {
+  // Directional / zoom buttons share data-pan / data-tilt / data-zoom attrs.
+  document.querySelectorAll('.ptz-btn[data-pan]').forEach(btn => {
+    const start = () => ptzSend({
+      action: 'move',
+      pan:  parseFloat(btn.dataset.pan  || 0),
+      tilt: parseFloat(btn.dataset.tilt || 0),
+      zoom: parseFloat(btn.dataset.zoom || 0),
+    });
+    btn.addEventListener('mousedown',   start);
+    btn.addEventListener('touchstart',  start, { passive: true });
+    btn.addEventListener('mouseup',     ptzStop);
+    btn.addEventListener('mouseleave',  ptzStop);
+    btn.addEventListener('touchend',    ptzStop);
+  });
+
+  // Focus buttons use data-speed attr.
+  document.querySelectorAll('.ptz-btn.ptz-focus').forEach(btn => {
+    const speed = parseFloat(btn.dataset.speed || 0);
+    btn.addEventListener('mousedown',   () => ptzSend({ action: 'focus', speed }));
+    btn.addEventListener('touchstart',  () => ptzSend({ action: 'focus', speed }), { passive: true });
+    btn.addEventListener('mouseup',     ptzFocusStop);
+    btn.addEventListener('mouseleave',  ptzFocusStop);
+    btn.addEventListener('touchend',    ptzFocusStop);
+  });
 }
 
 // ── Health polling ────────────────────────────────────────────────────────────

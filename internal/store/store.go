@@ -47,19 +47,22 @@ const (
 )
 
 type Camera struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	IP           string    `json:"ip"`
-	Port         int       `json:"port"`
-	Username     string    `json:"username,omitempty"`
-	Password     string    `json:"password,omitempty"`
-	StreamKey    string    `json:"stream_key"`
-	Channel      int       `json:"channel"`
-	Subtype      int       `json:"subtype"`
-	Enabled      bool      `json:"enabled"`
-	Manufacturer string    `json:"manufacturer,omitempty"`
-	Model        string    `json:"model,omitempty"`
-	AddedAt      FlexTime  `json:"added_at"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	IP             string   `json:"ip"`
+	Port           int      `json:"port"`
+	Username       string   `json:"username,omitempty"`
+	Password       string   `json:"password,omitempty"`
+	StreamKey      string   `json:"stream_key"`
+	Channel        int      `json:"channel"`
+	Subtype        int      `json:"subtype"`
+	Enabled        bool     `json:"enabled"`
+	Manufacturer   string   `json:"manufacturer,omitempty"`
+	Model          string   `json:"model,omitempty"`
+	AddedAt        FlexTime `json:"added_at"`
+	ONVIFUsername  string   `json:"onvif_username,omitempty"`
+	ONVIFPassword  string   `json:"onvif_password,omitempty"`
+	PTZEnabled     bool     `json:"ptz_enabled,omitempty"`
 }
 
 type CameraPublic struct {
@@ -68,6 +71,7 @@ type CameraPublic struct {
 	HasCredentials bool         `json:"has_credentials"`
 	Health         StreamHealth `json:"health"`
 	StreamRTSPURL  string       `json:"stream_rtsp_url,omitempty"`
+	HasPTZ         bool         `json:"has_ptz"`
 }
 
 type Store struct {
@@ -152,6 +156,26 @@ func (s *Store) UpdateCredentials(id, username, password string) (*Camera, error
 		if c.ID == id {
 			c.Username = username
 			c.Password = password
+			if err := s.save(); err != nil {
+				return nil, err
+			}
+			cp := *c
+			return &cp, nil
+		}
+	}
+	return nil, fmt.Errorf("camera %s not found", id)
+}
+
+// UpdateONVIFCredentials stores ONVIF credentials and marks PTZ as enabled.
+// Pass empty username/password to clear PTZ (disables PTZ).
+func (s *Store) UpdateONVIFCredentials(id, username, password string, enabled bool) (*Camera, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, c := range s.cameras {
+		if c.ID == id {
+			c.ONVIFUsername = username
+			c.ONVIFPassword = password
+			c.PTZEnabled = enabled
 			if err := s.save(); err != nil {
 				return nil, err
 			}
