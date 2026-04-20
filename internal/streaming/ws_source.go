@@ -113,11 +113,14 @@ func (s *WsSource) runOnce() error {
 	// independently of the WebSocket upgrade headers (mirrors Python behaviour).
 	rtspURL := fmt.Sprintf("rtsp://%s:%s@%s:%d/cam/realmonitor?channel=%d&subtype=%d",
 		rtspEscape(s.username), rtspEscape(s.password), s.host, s.port, s.channel, s.subtype)
-	baseURL := fmt.Sprintf("rtsp://%s:%d/", s.host, s.port)
+
+	// Base URL with credentials for all RTSP requests
+	rtspBaseURL := fmt.Sprintf("rtsp://%s:%s@%s:%d/cam/realmonitor",
+		rtspEscape(s.username), rtspEscape(s.password), s.host, s.port)
 
 	// OPTIONS
 	if err := s.sendRTSP(conn, cseq, fmt.Sprintf(
-		"OPTIONS %s RTSP/1.0\r\nCSeq: %d\r\n\r\n", baseURL, cseq)); err != nil {
+		"OPTIONS %s RTSP/1.0\r\nCSeq: %d\r\n\r\n", rtspBaseURL, cseq)); err != nil {
 		return err
 	}
 	optResp, err := s.readRTSP(conn)
@@ -208,8 +211,8 @@ func (s *WsSource) runOnce() error {
 			case <-ticker.C:
 				writeMu.Lock()
 				_ = s.sendRTSP(conn, cseqMu, fmt.Sprintf(
-					"OPTIONS rtsp://%s:%d/ RTSP/1.0\r\nCSeq: %d\r\nSession: %s\r\n\r\n",
-					s.host, s.port, cseqMu, sessionID))
+					"OPTIONS %s RTSP/1.0\r\nCSeq: %d\r\nSession: %s\r\n\r\n",
+					rtspBaseURL, cseqMu, sessionID))
 				cseqMu++
 				writeMu.Unlock()
 			}
