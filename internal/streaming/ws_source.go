@@ -86,9 +86,13 @@ func (s *WsSource) runOnce() error {
 	req, _ := http.NewRequest("GET", wsURL, nil)
 	req.SetBasicAuth(s.username, s.password)
 	hdr.Set("Authorization", req.Header.Get("Authorization"))
-	// Forward session cookies
+	// Forward session cookies in request format (name=value; name2=value2)
+	var cookies []string
 	for _, c := range s.cookies {
-		hdr.Add("Cookie", c.String())
+		cookies = append(cookies, fmt.Sprintf("%s=%s", c.Name, c.Value))
+	}
+	if len(cookies) > 0 {
+		hdr.Set("Cookie", strings.Join(cookies, "; "))
 	}
 
 	dialer := websocket.DefaultDialer
