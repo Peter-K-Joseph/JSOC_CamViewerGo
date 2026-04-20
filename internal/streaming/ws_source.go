@@ -93,6 +93,9 @@ func (s *WsSource) runOnce() error {
 	}
 	if len(cookies) > 0 {
 		hdr.Set("Cookie", strings.Join(cookies, "; "))
+		log.Printf("[ws_source] WebSocket headers: %d cookies: %v", len(s.cookies), strings.Join(cookies, "; "))
+	} else {
+		log.Printf("[ws_source] WARNING: No RPC2 session cookies available for WebSocket upgrade")
 	}
 
 	dialer := websocket.DefaultDialer
