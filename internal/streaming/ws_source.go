@@ -344,26 +344,37 @@ func parseSDPCodec(sdp string) (codec string, payloadType uint8, clockRate uint3
 	payloadType = 96
 	clockRate = 90000
 
+	inVideo := false
 	scanner := bufio.NewScanner(strings.NewReader(sdp))
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasPrefix(line, "a=rtpmap:") {
-			// a=rtpmap:96 H264/90000
-			var pt int
-			var name string
-			var rate uint32
-			fmt.Sscanf(strings.TrimPrefix(line, "a=rtpmap:"), "%d %s", &pt, &name)
-			fmt.Sscanf(name, "%[^/]/%d", &name, &rate)
-			payloadType = uint8(pt)
-			if rate > 0 {
-				clockRate = rate
-			}
-			nameLow := strings.ToLower(name)
-			if strings.Contains(nameLow, "265") || strings.Contains(nameLow, "hevc") {
-				codec = "h265"
-			} else {
-				codec = "h264"
-			}
+		if strings.HasPrefix(line, "m=video") {
+			inVideo = true
+			continue
+		}
+		if strings.HasPrefix(line, "m=") {
+			inVideo = false
+			continue
+		}
+		if !inVideo || !strings.HasPrefix(line, "a=rtpmap:") {
+			continue
+		}
+
+		// a=rtpmap:96 H264/90000
+		var pt int
+		var name string
+		var rate uint32
+		fmt.Sscanf(strings.TrimPrefix(line, "a=rtpmap:"), "%d %s", &pt, &name)
+		fmt.Sscanf(name, "%[^/]/%d", &name, &rate)
+		payloadType = uint8(pt)
+		if rate > 0 {
+			clockRate = rate
+		}
+		nameLow := strings.ToLower(name)
+		if strings.Contains(nameLow, "265") || strings.Contains(nameLow, "hevc") {
+			codec = "h265"
+		} else {
+			codec = "h264"
 		}
 	}
 	return
