@@ -10,6 +10,8 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"time"
+
+	"github.com/jsoc/camviewer/internal/netutil"
 )
 
 // Session holds the authenticated Dahua RPC2 session.
@@ -43,6 +45,12 @@ type rpcError struct {
 
 // Login performs the two-stage Dahua RPC2 MD5 challenge-response authentication.
 func Login(host string, port int, username, password string) (*Session, error) {
+	var err error
+	host, port, err = netutil.NormalizeHostPort(host, port)
+	if err != nil {
+		return nil, fmt.Errorf("invalid camera address: %w", err)
+	}
+
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{
 		Timeout: 10 * time.Second,
@@ -56,13 +64,13 @@ func Login(host string, port int, username, password string) (*Session, error) {
 		ID:      1,
 		Session: 0,
 		Params: map[string]any{
-			"userName":           username,
-			"password":           "",
-			"clientType":         "Web3.0",
-			"ipAddr":             "0.0.0.0",
-			"userLoginType":      "Direct",
-			"authorityType":      "Default",
-			"passwordType":       "Default",
+			"userName":      username,
+			"password":      "",
+			"clientType":    "Web3.0",
+			"ipAddr":        "0.0.0.0",
+			"userLoginType": "Direct",
+			"authorityType": "Default",
+			"passwordType":  "Default",
 		},
 	}
 

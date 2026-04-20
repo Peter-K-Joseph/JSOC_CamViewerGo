@@ -127,7 +127,11 @@ func (s *Server) apiAddCamera(w http.ResponseWriter, r *http.Request) {
 	}
 	cam, err := s.store.Add(body.Name, body.IP, body.Port, body.Manufacturer, body.Model)
 	if err != nil {
-		jsonError(w, err.Error(), 500)
+		code := 500
+		if strings.HasPrefix(err.Error(), "invalid camera address") {
+			code = 400
+		}
+		jsonError(w, err.Error(), code)
 		return
 	}
 	w.WriteHeader(201)
@@ -248,11 +252,12 @@ func (s *Server) apiONVIFLogin(w http.ResponseWriter, r *http.Request) {
 
 // apiPTZ dispatches PTZ / focus commands to the camera's ONVIF client.
 // Body: {"action":"move","pan":0.5,"tilt":0,"zoom":0}
-//       {"action":"stop"}
-//       {"action":"focus","speed":0.5}   (+= far, -= near)
-//       {"action":"focus-stop"}
-//       {"action":"focus-auto"}
-//       {"action":"focus-manual"}
+//
+//	{"action":"stop"}
+//	{"action":"focus","speed":0.5}   (+= far, -= near)
+//	{"action":"focus-stop"}
+//	{"action":"focus-auto"}
+//	{"action":"focus-manual"}
 func (s *Server) apiPTZ(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var body struct {

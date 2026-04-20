@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/jsoc/camviewer/internal/netutil"
 )
 
 // ── SOAP / WS-Security helpers ───────────────────────────────────────────────
@@ -131,8 +133,10 @@ type Client struct {
 // Probe creates and validates an ONVIF client for the given camera.
 // It performs GetCapabilities → GetProfiles to confirm PTZ support.
 func Probe(ip string, port int, username, password string) (*Client, error) {
-	if port == 0 {
-		port = 80
+	var err error
+	ip, port, err = netutil.NormalizeHostPort(ip, port)
+	if err != nil {
+		return nil, fmt.Errorf("invalid camera address: %w", err)
 	}
 	c := &Client{
 		DeviceURL: fmt.Sprintf("http://%s:%d/onvif/device_service", ip, port),

@@ -47,6 +47,21 @@ func TestAdd_And_List(t *testing.T) {
 	}
 }
 
+func TestAdd_NormalizesCameraAddress(t *testing.T) {
+	s := newTestStore(t)
+
+	cam, err := s.Add("Front Door", "http//192.168.1.40/onvif/device_service", 80, "Dahua", "IPC-HDW")
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if cam.IP != "192.168.1.40" {
+		t.Errorf("IP = %q, want 192.168.1.40", cam.IP)
+	}
+	if cam.Port != 80 {
+		t.Errorf("Port = %d, want 80", cam.Port)
+	}
+}
+
 func TestGet_Found(t *testing.T) {
 	s := newTestStore(t)
 	cam, _ := s.Add("Cam A", "10.0.0.1", 80, "", "")
@@ -202,13 +217,43 @@ func TestPersistence(t *testing.T) {
 	}
 }
 
+func TestLoad_NormalizesCameraAddress(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cameras.json")
+	raw := `[{
+  "id": "cam-1",
+  "name": "Legacy Cam",
+  "ip": "http//192.168.1.40/onvif/device_service",
+  "port": 80,
+  "stream_key": "legacy-cam",
+  "channel": 1,
+  "enabled": true,
+  "added_at": "2026-04-20T10:00:00Z"
+}]`
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	s, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got, ok := s.Get("cam-1")
+	if !ok {
+		t.Fatal("camera not found after load")
+	}
+	if got.IP != "192.168.1.40" {
+		t.Errorf("IP = %q, want 192.168.1.40", got.IP)
+	}
+}
+
 // ── Slugify ───────────────────────────────────────────────────────────────────
 
 func TestSlugify(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"Front Door", "front-door"},
-		{"Camera #1!", "camera-1"},  // runs of non-alnum collapse to single dash; trailing dash trimmed
-		{"  spaces  ", "spaces"},    // leading/trailing dashes trimmed
+		{"Camera #1!", "camera-1"}, // runs of non-alnum collapse to single dash; trailing dash trimmed
+		{"  spaces  ", "spaces"},   // leading/trailing dashes trimmed
 		{"", "cam"},
 		{"ALLCAPS", "allcaps"},
 	}

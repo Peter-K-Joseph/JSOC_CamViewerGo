@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jsoc/camviewer/internal/netutil"
 )
 
 // FlexTime unmarshals both RFC3339 (Go) and naive ISO8601 (Python) timestamps.
@@ -47,22 +48,22 @@ const (
 )
 
 type Camera struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	IP             string   `json:"ip"`
-	Port           int      `json:"port"`
-	Username       string   `json:"username,omitempty"`
-	Password       string   `json:"password,omitempty"`
-	StreamKey      string   `json:"stream_key"`
-	Channel        int      `json:"channel"`
-	Subtype        int      `json:"subtype"`
-	Enabled        bool     `json:"enabled"`
-	Manufacturer   string   `json:"manufacturer,omitempty"`
-	Model          string   `json:"model,omitempty"`
-	AddedAt        FlexTime `json:"added_at"`
-	ONVIFUsername  string   `json:"onvif_username,omitempty"`
-	ONVIFPassword  string   `json:"onvif_password,omitempty"`
-	PTZEnabled     bool     `json:"ptz_enabled,omitempty"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	IP            string   `json:"ip"`
+	Port          int      `json:"port"`
+	Username      string   `json:"username,omitempty"`
+	Password      string   `json:"password,omitempty"`
+	StreamKey     string   `json:"stream_key"`
+	Channel       int      `json:"channel"`
+	Subtype       int      `json:"subtype"`
+	Enabled       bool     `json:"enabled"`
+	Manufacturer  string   `json:"manufacturer,omitempty"`
+	Model         string   `json:"model,omitempty"`
+	AddedAt       FlexTime `json:"added_at"`
+	ONVIFUsername string   `json:"onvif_username,omitempty"`
+	ONVIFPassword string   `json:"onvif_password,omitempty"`
+	PTZEnabled    bool     `json:"ptz_enabled,omitempty"`
 }
 
 type CameraPublic struct {
@@ -75,9 +76,9 @@ type CameraPublic struct {
 }
 
 type Store struct {
-	mu       sync.RWMutex
-	path     string
-	cameras  []*Camera
+	mu      sync.RWMutex
+	path    string
+	cameras []*Camera
 }
 
 func New(dataDir string) (*Store, error) {
@@ -127,11 +128,16 @@ func (s *Store) Add(name, ip string, port int, manufacturer, model string) (*Cam
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	host, normalizedPort, err := netutil.NormalizeHostPort(ip, port)
+	if err != nil {
+		return nil, fmt.Errorf("invalid camera address: %w", err)
+	}
+
 	cam := &Camera{
 		ID:           uuid.New().String(),
 		Name:         name,
-		IP:           ip,
-		Port:         port,
+		IP:           host,
+		Port:         normalizedPort,
 		StreamKey:    slugify(name),
 		Channel:      1,
 		Subtype:      0,
@@ -209,6 +215,9 @@ func (s *Store) load() error {
 	}
 	// Support both bare array (Go format) and {"cameras":[...]} (Python format).
 	if err := json.Unmarshal(data, &s.cameras); err == nil {
+		if s.normalizeCameraAddresses() {
+			return s.save()
+		}
 		return nil
 	}
 	var wrapped struct {
@@ -218,8 +227,28 @@ func (s *Store) load() error {
 		return fmt.Errorf("parse cameras.json: %w", err)
 	}
 	s.cameras = wrapped.Cameras
+	s.normalizeCameraAddresses()
 	// Re-save in Go format so future loads are bare arrays.
 	return s.save()
+}
+
+func (s *Store) normalizeCameraAddresses() bool {
+	changed := false
+	for _, c := range s.cameras {
+		if c == nil {
+			continue
+		}
+		host, port, err := netutil.NormalizeHostPort(c.IP, c.Port)
+		if err != nil {
+			continue
+		}
+		if c.IP != host || c.Port != port {
+			c.IP = host
+			c.Port = port
+			changed = true
+		}
+	}
+	return changed
 }
 
 func (s *Store) save() error {
