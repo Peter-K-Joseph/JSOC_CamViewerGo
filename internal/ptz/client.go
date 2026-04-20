@@ -65,7 +65,7 @@ func (c *Client) soapCall(url, action, body string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", fmt.Sprintf(`application/soap+xml; charset=utf-8; action="%s"`, action))
-	req.Header.Set("http://www.w3.org/2003/05/soap-envelope/action", action)
+	req.Header.Set("SOAPAction", action)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
