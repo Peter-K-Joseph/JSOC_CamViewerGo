@@ -18,6 +18,7 @@ class MSEPlayer {
     this.gotInit = false;
     this.mimeType = null;
     this.destroyed = false;
+    this.started = false;
 
     this._drain = this._drain.bind(this);
     this._start();
@@ -39,12 +40,17 @@ class MSEPlayer {
     this.ws = new WebSocket(this.wsUrl);
     this.ws.binaryType = 'arraybuffer';
 
+    this.ws.onopen = () => {
+      console.log('[MSEPlayer] websocket open', this.wsUrl);
+    };
+
     this.ws.onmessage = (e) => {
       if (typeof e.data === 'string') {
         // JSON codec info
         try {
           const info = JSON.parse(e.data);
           this.mimeType = info.mimeType || `video/mp4; codecs="${info.codec}"`;
+          console.log('[MSEPlayer] codec info', this.mimeType);
           if (!this.sb && this.ms.readyState === 'open') {
             this._addSourceBuffer(this.mimeType);
           }
@@ -56,9 +62,12 @@ class MSEPlayer {
       this._drain();
     };
 
-    this.ws.onerror = () => {};
+    this.ws.onerror = (e) => {
+      console.error('[MSEPlayer] websocket error', e);
+    };
     this.ws.onclose = () => {
       if (!this.destroyed) {
+        console.warn('[MSEPlayer] websocket closed, reconnecting');
         // Reconnect after 2s
         setTimeout(() => {
           this.gotInit = false;
@@ -74,6 +83,9 @@ class MSEPlayer {
       this.sb = this.ms.addSourceBuffer(mimeType);
       this.sb.mode = 'segments';
       this.sb.addEventListener('updateend', this._drain);
+      this.sb.addEventListener('error', (e) => {
+        console.error('[MSEPlayer] sourcebuffer error', e);
+      });
     } catch (e) {
       console.error('[MSEPlayer] addSourceBuffer failed:', mimeType, e);
       // Try a generic H.264 fallback
@@ -105,6 +117,21 @@ class MSEPlayer {
           try { this.sb.remove(s, Math.min(s + 10, en)); } catch (_) {}
         }
         this.queue.unshift(chunk);
+      }
+    }
+
+    this._ensurePlaying();
+  }
+
+  _ensurePlaying() {
+    if (this.started || !this.video) return;
+    if (this.video.readyState >= 1 || this.sb) {
+      this.started = true;
+      const playResult = this.video.play();
+      if (playResult && typeof playResult.catch === 'function') {
+        playResult.catch((e) => {
+          console.warn('[MSEPlayer] video.play() blocked or failed', e);
+        });
       }
     }
   }
