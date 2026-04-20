@@ -129,10 +129,11 @@ func (s *WsSource) runOnce() error {
 	codec, payloadType, clockRate := parseSDPCodec(descResp)
 	log.Printf("[ws_source] codec=%s pt=%d clock=%d", codec, payloadType, clockRate)
 
-	// SETUP
+	// SETUP — use the track control URL from the SDP; fall back to /trackID=0.
+	setupURL := sdpTrackControl(descResp, rtspURL)
 	if err := s.sendRTSP(conn, cseq, fmt.Sprintf(
-		"SETUP %s/trackID=0 RTSP/1.0\r\nCSeq: %d\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n",
-		rtspURL, cseq)); err != nil {
+		"SETUP %s RTSP/1.0\r\nCSeq: %d\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n",
+		setupURL, cseq)); err != nil {
 		return err
 	}
 	setupResp, err := s.readRTSP(conn)
@@ -260,9 +261,10 @@ func (s *WsSource) runOnce() error {
 	}
 }
 
-// sendRTSP writes an RTSP request as a WebSocket binary message.
+// sendRTSP writes an RTSP request as a WebSocket text message.
+// Dahua cameras expect RTSP control messages as text frames; binary causes them to ignore the request.
 func (s *WsSource) sendRTSP(conn *websocket.Conn, _ int, msg string) error {
-	return conn.WriteMessage(websocket.BinaryMessage, []byte(msg))
+	return conn.WriteMessage(websocket.TextMessage, []byte(msg))
 }
 
 // readRTSP reads WebSocket messages until it assembles a complete RTSP response.
@@ -315,6 +317,36 @@ func parseSDPCodec(sdp string) (codec string, payloadType uint8, clockRate uint3
 		}
 	}
 	return
+}
+
+// sdpTrackControl extracts the first video track's a=control URL from an SDP body.
+// If the value is relative (no scheme), it is appended to baseURL.
+// Falls back to baseURL+"/trackID=0" if no control attribute is found.
+func sdpTrackControl(sdp, baseURL string) string {
+	inVideo := false
+	for _, line := range strings.Split(sdp, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.HasPrefix(line, "m=video") {
+			inVideo = true
+			continue
+		}
+		if strings.HasPrefix(line, "m=") {
+			inVideo = false
+			continue
+		}
+		if inVideo && strings.HasPrefix(line, "a=control:") {
+			ctrl := strings.TrimPrefix(line, "a=control:")
+			ctrl = strings.TrimSpace(ctrl)
+			if ctrl == "" || ctrl == "*" {
+				break
+			}
+			if strings.HasPrefix(ctrl, "rtsp://") {
+				return ctrl
+			}
+			return strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(ctrl, "/")
+		}
+	}
+	return baseURL + "/trackID=0"
 }
 
 func parseSession(resp string) string {
