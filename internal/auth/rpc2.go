@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jsoc/camviewer/internal/netutil"
@@ -27,7 +29,7 @@ type Session struct {
 type rpcRequest struct {
 	Method  string         `json:"method"`
 	ID      int            `json:"id"`
-	Session int            `json:"session"`
+	Session any            `json:"session"`
 	Params  map[string]any `json:"params"`
 }
 
@@ -36,7 +38,7 @@ type rpcResponse struct {
 	Error   *rpcError      `json:"error"`
 	Result  any            `json:"result"`
 	Params  map[string]any `json:"params"`
-	Session int            `json:"session"`
+	Session any            `json:"session"`
 }
 
 type rpcError struct {
@@ -84,13 +86,17 @@ func Login(host string, port int, username, password string) (*Session, error) {
 
 	realm, _ := params["realm"].(string)
 	random, _ := params["random"].(string)
-	sessionID := resp1.Session
-	if sessionID == 0 {
-		sessionID = intParam(params, "session")
+	sessionValue := resp1.Session
+	if isEmptySession(sessionValue) {
+		sessionValue = params["session"]
 	}
-	if sessionID == 0 {
-		sessionID = intParam(params, "sessionID")
+	if isEmptySession(sessionValue) {
+		sessionValue = params["sessionID"]
 	}
+	if isEmptySession(sessionValue) {
+		sessionValue = 0
+	}
+	sessionID := intSession(sessionValue)
 
 	if realm == "" || random == "" {
 		return nil, fmt.Errorf("rpc2: no challenge params in response")
@@ -106,7 +112,7 @@ func Login(host string, port int, username, password string) (*Session, error) {
 	req2 := rpcRequest{
 		Method:  "global.login",
 		ID:      3,
-		Session: sessionID,
+		Session: sessionValue,
 		Params: map[string]any{
 			"userName":      username,
 			"password":      loginHash,
@@ -128,8 +134,9 @@ func Login(host string, port int, username, password string) (*Session, error) {
 	if ok, present := resultBool(resp2.Result); present && !ok {
 		return nil, fmt.Errorf("rpc2 auth failed")
 	}
-	if resp2.Session != 0 {
-		sessionID = resp2.Session
+	if !isEmptySession(resp2.Session) {
+		sessionValue = resp2.Session
+		sessionID = intSession(resp2.Session)
 	}
 
 	// Collect cookies for WebSocket auth
@@ -168,13 +175,47 @@ func doRPC(client *http.Client, endpoint string, req rpcRequest) (*rpcResponse, 
 }
 
 func intParam(params map[string]any, key string) int {
-	switch v := params[key].(type) {
+	return intSession(params[key])
+}
+
+func intSession(value any) int {
+	switch v := value.(type) {
 	case float64:
 		return int(v)
 	case int:
 		return v
+	case string:
+		s := strings.TrimSpace(v)
+		if s == "" {
+			return 0
+		}
+		if strings.HasPrefix(strings.ToLower(s), "0x") {
+			parsed, err := strconv.ParseInt(s[2:], 16, 64)
+			if err == nil {
+				return int(parsed)
+			}
+		}
+		parsed, err := strconv.Atoi(s)
+		if err == nil {
+			return parsed
+		}
 	}
 	return 0
+}
+
+func isEmptySession(value any) bool {
+	if value == nil {
+		return true
+	}
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v) == ""
+	case float64:
+		return v == 0
+	case int:
+		return v == 0
+	}
+	return false
 }
 
 func resultMap(result any) map[string]any {
