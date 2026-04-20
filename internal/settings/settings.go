@@ -15,9 +15,10 @@ import (
 type Protocol string
 
 const (
-	ProtocolWS   Protocol = "ws"   // Dahua /rtspoverwebsocket (default)
-	ProtocolRTSP Protocol = "rtsp" // Standard RTSP TCP port 554
-	ProtocolRTMP Protocol = "rtmp" // Camera-push RTMP (requires camera config — future)
+	ProtocolWS    Protocol = "ws"    // Dahua /rtspoverwebsocket (default)
+	ProtocolRTSP  Protocol = "rtsp"  // Standard RTSP TCP port 554
+	ProtocolRTMP  Protocol = "rtmp"  // Camera-push RTMP (requires camera config — future)
+	ProtocolDVRIP Protocol = "dvrip" // Dahua private protocol TCP port 37777
 )
 
 // Settings holds all user-configurable preferences.

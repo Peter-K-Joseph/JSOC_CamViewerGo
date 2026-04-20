@@ -163,6 +163,13 @@ func (m *Manager) buildSource(cam *store.Camera, cookies []*http.Cookie, track *
 			cam.Channel, cam.Subtype,
 			track, m.keepaliveInterval,
 		)
+	case settings.ProtocolDVRIP:
+		return NewDvripSource(
+			cam.IP, 0, // 0 → uses dvripDefaultPort (37777)
+			cam.Username, cam.Password,
+			cam.Channel, cam.Subtype,
+			track, m.keepaliveInterval,
+		)
 	case settings.ProtocolRTMP:
 		// RTMP is camera-push only — not implementable as a pull source.
 		// Fall back to WS and log a warning.

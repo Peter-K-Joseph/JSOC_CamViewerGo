@@ -539,13 +539,16 @@ const preferencesTmpl = `{{define "content"}}
       </div>
       <div style="display:flex;flex-direction:column;gap:0.35rem">
         <label class="radio-row">
-          <input type="radio" name="pref-proto" value="ws"   {{if eq .Settings.StreamProtocol "ws"  }}checked{{end}}> WebSocket (WS) — Dahua default
+          <input type="radio" name="pref-proto" value="ws"    {{if eq .Settings.StreamProtocol "ws"   }}checked{{end}}> WebSocket (WS) — Dahua /rtspoverwebsocket (port 80)
         </label>
         <label class="radio-row">
-          <input type="radio" name="pref-proto" value="rtsp" {{if eq .Settings.StreamProtocol "rtsp"}}checked{{end}}> RTSP TCP (port 554)
+          <input type="radio" name="pref-proto" value="rtsp"  {{if eq .Settings.StreamProtocol "rtsp" }}checked{{end}}> RTSP TCP — standard port 554, Digest auth
         </label>
-        <label class="radio-row" style="opacity:.5">
-          <input type="radio" name="pref-proto" value="rtmp" {{if eq .Settings.StreamProtocol "rtmp"}}checked{{end}} disabled> RTMP (camera-push, not yet implemented)
+        <label class="radio-row">
+          <input type="radio" name="pref-proto" value="dvrip" {{if eq .Settings.StreamProtocol "dvrip"}}checked{{end}}> DVRIP — Dahua private protocol, port 37777
+        </label>
+        <label class="radio-row" style="opacity:.45">
+          <input type="radio" name="pref-proto" value="rtmp"  {{if eq .Settings.StreamProtocol "rtmp" }}checked{{end}} disabled> RTMP (camera-push only — not yet supported)
         </label>
       </div>
     </div>
