@@ -32,10 +32,11 @@ type rpcRequest struct {
 }
 
 type rpcResponse struct {
-	ID     int            `json:"id"`
-	Error  *rpcError      `json:"error"`
-	Result map[string]any `json:"result"`
-	Params map[string]any `json:"params"`
+	ID      int            `json:"id"`
+	Error   *rpcError      `json:"error"`
+	Result  any            `json:"result"`
+	Params  map[string]any `json:"params"`
+	Session int            `json:"session"`
 }
 
 type rpcError struct {
@@ -61,49 +62,50 @@ func Login(host string, port int, username, password string) (*Session, error) {
 	// Stage 1: get challenge
 	req1 := rpcRequest{
 		Method:  "global.login",
-		ID:      1,
+		ID:      2,
 		Session: 0,
 		Params: map[string]any{
-			"userName":      username,
-			"password":      "",
-			"clientType":    "Web3.0",
-			"ipAddr":        "0.0.0.0",
-			"userLoginType": "Direct",
-			"authorityType": "Default",
-			"passwordType":  "Default",
+			"userName":   username,
+			"password":   "",
+			"clientType": "Web3.0",
+			"loginType":  "Direct",
 		},
 	}
 
-	resp1, err := doRPC(client, base, req1)
+	resp1, err := doRPC(client, base+"/RPC2_Login", req1)
 	if err != nil {
 		return nil, fmt.Errorf("rpc2 challenge: %w", err)
 	}
 
 	params := resp1.Params
 	if params == nil {
-		params = resp1.Result
+		params = resultMap(resp1.Result)
 	}
 
 	realm, _ := params["realm"].(string)
 	random, _ := params["random"].(string)
-	sessionIDf, _ := params["sessionID"].(float64)
-	sessionID := int(sessionIDf)
+	sessionID := resp1.Session
+	if sessionID == 0 {
+		sessionID = intParam(params, "session")
+	}
+	if sessionID == 0 {
+		sessionID = intParam(params, "sessionID")
+	}
 
 	if realm == "" || random == "" {
 		return nil, fmt.Errorf("rpc2: no challenge params in response")
 	}
 
-	// Compute login hash: MD5(MD5(user:realm:pass):random:MD5(user:realm:pass))
-	// Dahua uses: MD5(username:realm:password) -> hex uppercase
-	// then MD5(hash1:random:hash1) -> hex uppercase — but actual formula is:
-	// loginHash = MD5(UPPERCASE(hash1) + ":" + random + ":" + UPPERCASE(hash1))
+	// Dahua RPC2 login: MD5(username:realm:password), then
+	// MD5(username:random:firstHash). Some firmware rejects the alternate
+	// MD5(firstHash:random:firstHash) form.
 	hash1 := md5Hex(username + ":" + realm + ":" + password)
-	loginHash := md5Hex(hash1 + ":" + random + ":" + hash1)
+	loginHash := md5Hex(username + ":" + random + ":" + hash1)
 
 	// Stage 2: authenticate
 	req2 := rpcRequest{
 		Method:  "global.login",
-		ID:      2,
+		ID:      3,
 		Session: sessionID,
 		Params: map[string]any{
 			"userName":      username,
@@ -116,12 +118,18 @@ func Login(host string, port int, username, password string) (*Session, error) {
 		},
 	}
 
-	resp2, err := doRPC(client, base, req2)
+	resp2, err := doRPC(client, base+"/RPC2_Login", req2)
 	if err != nil {
 		return nil, fmt.Errorf("rpc2 login: %w", err)
 	}
 	if resp2.Error != nil && resp2.Error.Code != 0 {
 		return nil, fmt.Errorf("rpc2 auth failed: %s (code %d)", resp2.Error.Message, resp2.Error.Code)
+	}
+	if ok, present := resultBool(resp2.Result); present && !ok {
+		return nil, fmt.Errorf("rpc2 auth failed")
+	}
+	if resp2.Session != 0 {
+		sessionID = resp2.Session
 	}
 
 	// Collect cookies for WebSocket auth
@@ -138,12 +146,12 @@ func Login(host string, port int, username, password string) (*Session, error) {
 	}, nil
 }
 
-func doRPC(client *http.Client, base string, req rpcRequest) (*rpcResponse, error) {
+func doRPC(client *http.Client, endpoint string, req rpcRequest) (*rpcResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := client.Post(base+"/RPC2", "application/json", bytes.NewReader(body))
+	resp, err := client.Post(endpoint, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +165,30 @@ func doRPC(client *http.Client, base string, req rpcRequest) (*rpcResponse, erro
 		return nil, fmt.Errorf("parse rpc response: %w", err)
 	}
 	return &rpcResp, nil
+}
+
+func intParam(params map[string]any, key string) int {
+	switch v := params[key].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	}
+	return 0
+}
+
+func resultMap(result any) map[string]any {
+	if m, ok := result.(map[string]any); ok {
+		return m
+	}
+	return nil
+}
+
+func resultBool(result any) (bool, bool) {
+	if b, ok := result.(bool); ok {
+		return b, true
+	}
+	return false, false
 }
 
 func md5Hex(s string) string {
