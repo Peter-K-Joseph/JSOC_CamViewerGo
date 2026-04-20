@@ -108,81 +108,44 @@ func (s *WsSource) runOnce() error {
 
 	// ── RTSP handshake over WS ──
 	cseq := 1
+	var auth *rtspDigest
 
-	// Embed credentials in the RTSP URL so the camera can auth the stream
-	// independently of the WebSocket upgrade headers (mirrors Python behaviour).
-	rtspURL := fmt.Sprintf("rtsp://%s:%s@%s:%d/cam/realmonitor?channel=%d&subtype=%d",
-		rtspEscape(s.username), rtspEscape(s.password), s.host, s.port, s.channel, s.subtype)
+	// Use the browser-style unauthenticated RTSP URI, then answer the Digest
+	// challenge inside the RTSP-over-WS tunnel.
+	rtspBaseURL := fmt.Sprintf("rtsp://%s:%d/cam/realmonitor?channel=%d&subtype=%d&proto=Private3",
+		s.host, s.port, s.channel, s.subtype)
+	rtspStreamURL := rtspBaseURL
 
-	// Base URL with credentials for all RTSP requests
-	rtspBaseURL := fmt.Sprintf("rtsp://%s:%s@%s:%d/cam/realmonitor",
-		rtspEscape(s.username), rtspEscape(s.password), s.host, s.port)
-
-	// OPTIONS
-	if err := s.sendRTSP(conn, cseq, fmt.Sprintf(
-		"OPTIONS %s RTSP/1.0\r\nCSeq: %d\r\n\r\n", rtspBaseURL, cseq)); err != nil {
+	_, cseq, auth, err = s.rtspRequest(conn, cseq, "OPTIONS", rtspBaseURL, rtspBaseURL, "", auth)
+	if err != nil {
 		return err
 	}
-	optResp, err := s.readRTSP(conn)
-	if err != nil {
-		return fmt.Errorf("OPTIONS response: %w", err)
-	}
-	log.Printf("[ws_source] OPTIONS: %s", rtspStatusLine(optResp))
-	cseq++
 
-	// DESCRIBE
-	if err := s.sendRTSP(conn, cseq, fmt.Sprintf(
-		"DESCRIBE %s RTSP/1.0\r\nCSeq: %d\r\nAccept: application/sdp\r\n\r\n",
-		rtspURL, cseq)); err != nil {
+	descResp, nextCSeq, nextAuth, err := s.rtspRequest(conn, cseq, "DESCRIBE", rtspBaseURL, rtspBaseURL, "Accept: application/sdp\r\n", auth)
+	if err != nil {
 		return err
 	}
-	descResp, err := s.readRTSP(conn)
-	if err != nil {
-		return fmt.Errorf("DESCRIBE response: %w", err)
-	}
-	log.Printf("[ws_source] DESCRIBE: %s", rtspStatusLine(descResp))
-	if code := rtspStatusCode(descResp); code != 200 {
-		return fmt.Errorf("DESCRIBE: status %d", code)
-	}
-	cseq++
+	cseq, auth = nextCSeq, nextAuth
 
 	codec, payloadType, clockRate := parseSDPCodec(descResp)
 	log.Printf("[ws_source] codec=%s pt=%d clock=%d", codec, payloadType, clockRate)
 
 	// SETUP — use the track control URL from the SDP; fall back to /trackID=0.
-	setupURL := sdpTrackControl(descResp, rtspURL)
+	setupURL := sdpTrackControl(descResp, rtspStreamURL)
 	log.Printf("[ws_source] SETUP url=%s", setupURL)
-	if err := s.sendRTSP(conn, cseq, fmt.Sprintf(
-		"SETUP %s RTSP/1.0\r\nCSeq: %d\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n",
-		setupURL, cseq)); err != nil {
+	setupResp, nextCSeq, nextAuth, err := s.rtspRequest(conn, cseq, "SETUP", setupURL, rtspBaseURL, "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n", auth)
+	if err != nil {
 		return err
 	}
-	setupResp, err := s.readRTSP(conn)
-	if err != nil {
-		return fmt.Errorf("SETUP response: %w", err)
-	}
-	log.Printf("[ws_source] SETUP: %s", rtspStatusLine(setupResp))
-	if code := rtspStatusCode(setupResp); code != 200 {
-		return fmt.Errorf("SETUP: status %d", code)
-	}
+	cseq, auth = nextCSeq, nextAuth
 	sessionID := parseSession(setupResp)
-	cseq++
 
 	// PLAY
-	if err := s.sendRTSP(conn, cseq, fmt.Sprintf(
-		"PLAY %s RTSP/1.0\r\nCSeq: %d\r\nSession: %s\r\nRange: npt=0.000-\r\n\r\n",
-		rtspURL, cseq, sessionID)); err != nil {
+	_, nextCSeq, auth, err = s.rtspRequest(conn, cseq, "PLAY", rtspBaseURL, rtspBaseURL, fmt.Sprintf("Session: %s\r\nRange: npt=0.000-\r\n", sessionID), auth)
+	if err != nil {
 		return err
 	}
-	playResp, err := s.readRTSP(conn)
-	if err != nil {
-		return fmt.Errorf("PLAY response: %w", err)
-	}
-	log.Printf("[ws_source] PLAY: %s", rtspStatusLine(playResp))
-	if code := rtspStatusCode(playResp); code != 200 {
-		return fmt.Errorf("PLAY: status %d", code)
-	}
-	cseq++
+	cseq = nextCSeq
 
 	log.Printf("[ws_source] streaming started session=%s", sessionID)
 
@@ -210,9 +173,7 @@ func (s *WsSource) runOnce() error {
 				return
 			case <-ticker.C:
 				writeMu.Lock()
-				_ = s.sendRTSP(conn, cseqMu, fmt.Sprintf(
-					"OPTIONS %s RTSP/1.0\r\nCSeq: %d\r\nSession: %s\r\n\r\n",
-					rtspBaseURL, cseqMu, sessionID))
+				_ = s.sendRTSP(conn, buildRTSPRequest("OPTIONS", rtspBaseURL, cseqMu, fmt.Sprintf("Session: %s\r\n", sessionID), auth, rtspBaseURL))
 				cseqMu++
 				writeMu.Unlock()
 			}
@@ -293,8 +254,62 @@ func (s *WsSource) runOnce() error {
 
 // sendRTSP writes an RTSP request as a WebSocket text message.
 // Dahua cameras expect RTSP control messages as text frames; binary causes them to ignore the request.
-func (s *WsSource) sendRTSP(conn *websocket.Conn, _ int, msg string) error {
+func (s *WsSource) sendRTSP(conn *websocket.Conn, msg string) error {
 	return conn.WriteMessage(websocket.TextMessage, []byte(msg))
+}
+
+func (s *WsSource) rtspRequest(conn *websocket.Conn, cseq int, method, requestURI, authURI, extra string, auth *rtspDigest) (string, int, *rtspDigest, error) {
+	resp, err := s.rtspExchange(conn, cseq, method, requestURI, authURI, extra, auth)
+	if err != nil {
+		return "", cseq, auth, err
+	}
+	code := rtspStatusCode(resp)
+	log.Printf("[ws_source] %s: %s", method, rtspStatusLine(resp))
+	if code == 401 {
+		challenge := parseRTSPDigestChallenge(resp, s.username, s.password)
+		if challenge == nil {
+			return resp, cseq + 1, auth, fmt.Errorf("%s: 401 without Digest challenge", method)
+		}
+		cseq++
+		resp, err = s.rtspExchange(conn, cseq, method, requestURI, authURI, extra, challenge)
+		if err != nil {
+			return "", cseq, challenge, err
+		}
+		code = rtspStatusCode(resp)
+		log.Printf("[ws_source] %s auth: %s", method, rtspStatusLine(resp))
+		if code != 200 {
+			return resp, cseq + 1, challenge, fmt.Errorf("%s: status %d", method, code)
+		}
+		return resp, cseq + 1, challenge, nil
+	}
+	if code != 200 {
+		return resp, cseq + 1, auth, fmt.Errorf("%s: status %d", method, code)
+	}
+	return resp, cseq + 1, auth, nil
+}
+
+func (s *WsSource) rtspExchange(conn *websocket.Conn, cseq int, method, requestURI, authURI, extra string, auth *rtspDigest) (string, error) {
+	msg := buildRTSPRequest(method, requestURI, cseq, extra, auth, authURI)
+	if err := s.sendRTSP(conn, msg); err != nil {
+		return "", err
+	}
+	resp, err := s.readRTSP(conn)
+	if err != nil {
+		return "", fmt.Errorf("%s response: %w", method, err)
+	}
+	return resp, nil
+}
+
+func buildRTSPRequest(method, requestURI string, cseq int, extra string, auth *rtspDigest, authURI string) string {
+	var sb strings.Builder
+	sb.WriteString(method + " " + requestURI + " RTSP/1.0\r\n")
+	fmt.Fprintf(&sb, "CSeq: %d\r\n", cseq)
+	if auth != nil {
+		sb.WriteString("Authorization: " + auth.header(method, authURI) + "\r\n")
+	}
+	sb.WriteString(extra)
+	sb.WriteString("\r\n")
+	return sb.String()
 }
 
 // readRTSP reads WebSocket messages until it assembles a complete RTSP response.
