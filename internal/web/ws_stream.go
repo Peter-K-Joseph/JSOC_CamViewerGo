@@ -39,19 +39,25 @@ func (s *Server) handleWSStream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// Wait for codec params (SPS/PPS) — keyframe may not have arrived yet.
+	// Wait for codec params (SPS/PPS). Some cameras only emit them after the
+	// first IDR packet, so keep the websocket open instead of timing out early.
 	var codec string
 	var sps, pps, vps []byte
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
 		codec, sps, pps, vps = track.Params()
 		if len(sps) > 0 {
 			break
 		}
-		time.Sleep(100 * time.Millisecond)
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+		}
 	}
 	if len(sps) == 0 {
-		log.Printf("[ws] %s: no SPS after 10s, closing", streamKey)
+		log.Printf("[ws] %s: no SPS available, closing", streamKey)
 		return
 	}
 

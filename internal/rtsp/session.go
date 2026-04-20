@@ -159,6 +159,7 @@ func (s *session) writeAccessUnit(au streaming.AccessUnit) error {
 			if err := s.writeInterleaved(0, pkt); err != nil {
 				return err
 			}
+			s.seqNum++
 		} else {
 			// FU-A fragmentation (H.264 only path; H.265 uses same logic)
 			nalHdr := nal[0]
@@ -186,10 +187,10 @@ func (s *session) writeAccessUnit(au streaming.AccessUnit) error {
 				if err := s.writeInterleaved(0, pkt); err != nil {
 					return err
 				}
+				s.seqNum++
 				first = false
 			}
 		}
-		s.seqNum++
 	}
 	return nil
 }
