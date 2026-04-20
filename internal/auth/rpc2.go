@@ -169,6 +169,8 @@ func Login(host string, port int, username, password string) (*Session, error) {
 	// Collect cookies for WebSocket auth
 	u, _ := url.Parse(base)
 	cookies := jar.Cookies(u)
+	log.Printf("[auth] RPC2 login successful. SessionID=%d, Cookies=%d: %v",
+		sessionID, len(cookies), cookies)
 
 	return &Session{
 		Host:      host,
