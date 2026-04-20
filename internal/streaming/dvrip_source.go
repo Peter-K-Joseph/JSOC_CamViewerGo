@@ -404,26 +404,50 @@ func extractAndSetParams(t *Track, codec string, annexb []byte) {
 	}
 }
 
-// splitAnnexB splits an Annex-B buffer on 4-byte start codes (00 00 00 01),
-// returning raw NALU bytes without the start code.
+// splitAnnexB splits an Annex-B buffer on 3-byte (00 00 01) or 4-byte
+// (00 00 00 01) start codes, returning raw NALU bytes without the start code.
 func splitAnnexB(b []byte) [][]byte {
-	startCode := []byte{0x00, 0x00, 0x00, 0x01}
 	var nalus [][]byte
 	for len(b) > 0 {
-		if !bytes.HasPrefix(b, startCode) {
-			b = b[1:]
-			continue
+		// Find the next start code (3-byte or 4-byte).
+		sc, skip := annexBStartCode(b)
+		if sc < 0 {
+			// No start code found at all — treat remainder as one NALU.
+			if len(nalus) > 0 {
+				nalus[len(nalus)-1] = append(nalus[len(nalus)-1], b...)
+			}
+			break
 		}
-		b = b[4:] // skip start code
-		next := bytes.Index(b, startCode)
-		if next < 0 {
+		b = b[sc+skip:] // skip past the start code
+
+		// Find the end of this NALU (start of the next start code).
+		end, _ := annexBStartCode(b)
+		if end < 0 {
 			nalus = append(nalus, b)
 			break
 		}
-		nalus = append(nalus, b[:next])
-		b = b[next:]
+		nalus = append(nalus, b[:end])
+		b = b[end:]
 	}
 	return nalus
+}
+
+// annexBStartCode returns the index of the next Annex-B start code in b and
+// the number of bytes to skip (3 for 00 00 01, 4 for 00 00 00 01).
+// Returns -1, 0 if no start code is found.
+func annexBStartCode(b []byte) (idx, skip int) {
+	for i := 0; i+2 < len(b); i++ {
+		if b[i] != 0x00 || b[i+1] != 0x00 {
+			continue
+		}
+		if b[i+2] == 0x01 {
+			return i, 3
+		}
+		if b[i+2] == 0x00 && i+3 < len(b) && b[i+3] == 0x01 {
+			return i, 4
+		}
+	}
+	return -1, 0
 }
 
 // ── SofiaHash ─────────────────────────────────────────────────────────────────

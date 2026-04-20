@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -158,22 +159,51 @@ func (s *WsSource) runOnce() error {
 	var h264dp H264Depacketizer
 	var h265dp H265Depacketizer
 
-	keepaliveTicker := time.NewTicker(s.keepaliveInterval)
-	defer keepaliveTicker.Stop()
+	// writeMu serialises WebSocket writes: keepalive goroutine and the read
+	// loop both call sendRTSP, but gorilla/websocket disallows concurrent writes.
+	var writeMu sync.Mutex
+	cseqMu := cseq // local copy owned by keepalive goroutine
+
+	// keepalive goroutine — fires independently of the read loop so that a
+	// silent camera (no frames) doesn't cause the 30-second read deadline to
+	// expire before we send OPTIONS.
+	kaStop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(s.keepaliveInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-kaStop:
+				return
+			case <-s.stopCh:
+				return
+			case <-ticker.C:
+				writeMu.Lock()
+				_ = s.sendRTSP(conn, cseqMu, fmt.Sprintf(
+					"OPTIONS rtsp://%s:%d/ RTSP/1.0\r\nCSeq: %d\r\nSession: %s\r\n\r\n",
+					s.host, s.port, cseqMu, sessionID))
+				cseqMu++
+				writeMu.Unlock()
+			}
+		}
+	}()
+	defer close(kaStop)
+
+	// Read deadline is 3× the keepalive interval so we always get at least two
+	// keepalive opportunities before the connection is considered dead.
+	readDeadline := s.keepaliveInterval * 3
+	if readDeadline < 60*time.Second {
+		readDeadline = 60 * time.Second
+	}
 
 	for {
 		select {
 		case <-s.stopCh:
 			return nil
-		case <-keepaliveTicker.C:
-			_ = s.sendRTSP(conn, cseq, fmt.Sprintf(
-				"OPTIONS rtsp://%s:%d/ RTSP/1.0\r\nCSeq: %d\r\nSession: %s\r\n\r\n",
-				s.host, s.port, cseq, sessionID))
-			cseq++
 		default:
 		}
 
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		conn.SetReadDeadline(time.Now().Add(readDeadline))
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			return fmt.Errorf("ws read: %w", err)

@@ -134,6 +134,15 @@ type Client struct {
 	http *http.Client
 }
 
+// deviceServicePaths are tried in order during Probe until one answers.
+var deviceServicePaths = []string{
+	"/onvif/device_service",
+	"/onvif/device_management",
+	"/onvif/device",
+	"/onvif/services",
+	"/onvif/Device",
+}
+
 // Probe creates and validates an ONVIF client for the given camera.
 // It performs GetCapabilities → GetProfiles to confirm PTZ support.
 func Probe(ip string, port int, username, password string) (*Client, error) {
@@ -143,13 +152,25 @@ func Probe(ip string, port int, username, password string) (*Client, error) {
 		return nil, fmt.Errorf("invalid camera address: %w", err)
 	}
 	c := &Client{
-		DeviceURL: fmt.Sprintf("http://%s:%d/onvif/device_service", ip, port),
-		Username:  username,
-		password:  password,
-		http:      &http.Client{Timeout: 10 * time.Second},
+		Username: username,
+		password: password,
+		http:     &http.Client{Timeout: 10 * time.Second},
 	}
-	if err := c.getCapabilities(); err != nil {
-		return nil, fmt.Errorf("GetCapabilities: %w", err)
+	base := fmt.Sprintf("http://%s:%d", ip, port)
+	var lastErr error
+	for _, path := range deviceServicePaths {
+		c.DeviceURL = base + path
+		lastErr = c.getCapabilities()
+		if lastErr == nil {
+			break
+		}
+		// Only try the next path for 404 — auth failures and SOAP faults are definitive.
+		if !strings.Contains(lastErr.Error(), "HTTP 404") {
+			break
+		}
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("GetCapabilities: %w", lastErr)
 	}
 	if c.PTZURL == "" {
 		return nil, fmt.Errorf("camera reports no PTZ capability")
