@@ -99,7 +99,9 @@ function startPlayer(camId, streamKey) {
 
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const wsUrl = `${proto}://${location.host}/ws/stream/${streamKey}`;
-  players[camId] = new MSEPlayer(video, wsUrl);
+  players[camId] = new MSEPlayer(video, wsUrl, {
+    fallbackUrl: '/proxy/cameras/' + camId + '/stream',
+  });
 }
 
 // ── Fullscreen modal ──────────────────────────────────────────────────────────
@@ -137,7 +139,9 @@ function openModal(id, name, ip, key, health, rtsp, hasPTZ) {
     const video = document.getElementById('modal-video');
     if (video && health !== 'offline' && health !== 'auth-failed' && health !== 'unknown') {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      modalPlayer = new MSEPlayer(video, `${proto}://${location.host}/ws/stream/${key}`);
+      modalPlayer = new MSEPlayer(video, `${proto}://${location.host}/ws/stream/${key}`, {
+        fallbackUrl: '/proxy/cameras/' + id + '/stream',
+      });
     }
   }
 }
