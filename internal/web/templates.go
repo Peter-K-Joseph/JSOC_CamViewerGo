@@ -473,8 +473,10 @@ const viewerTmpl = `{{define "content"}}
 <script>
   const v = document.getElementById('main-video');
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const wsUrl = proto + '://' + location.host + '/ws/camera/{{.Camera.ID}}';
-  new MSEPlayer(v, wsUrl);
+  const wsUrl = proto + '://' + location.host + '/ws/camera/{{.Camera.ID}}/annexb';
+  new MSEPlayer(v, wsUrl, {
+    fallbackUrl: '/proxy/cameras/{{.Camera.ID}}/stream',
+  });
 </script>
 {{end}}`
 
