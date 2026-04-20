@@ -58,13 +58,14 @@ func soapEnvelope(header, body string) string {
 }
 
 // soapCall sends a SOAP request and returns the raw response body.
-func (c *Client) soapCall(url, body string) ([]byte, error) {
+func (c *Client) soapCall(url, action, body string) ([]byte, error) {
 	payload := soapEnvelope(wsseHeader(c.Username, c.password), body)
 	req, err := http.NewRequest("POST", url, bytes.NewBufferString(payload))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", `application/soap+xml; charset=utf-8`)
+	req.Header.Set("Content-Type", fmt.Sprintf(`application/soap+xml; charset=utf-8; action="%s"`, action))
+	req.Header.Set("http://www.w3.org/2003/05/soap-envelope/action", action)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
@@ -75,7 +76,10 @@ func (c *Client) soapCall(url, body string) ([]byte, error) {
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(data), 200))
+		if fault := soapFault(data); fault != "" {
+			return nil, fmt.Errorf("HTTP %d SOAP fault: %s", resp.StatusCode, fault)
+		}
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(data), 1000))
 	}
 	if fault := soapFault(data); fault != "" {
 		return nil, fmt.Errorf("SOAP fault: %s", fault)
@@ -163,7 +167,7 @@ func Probe(ip string, port int, username, password string) (*Client, error) {
 
 func (c *Client) getCapabilities() error {
 	body := `<tds:GetCapabilities><tds:Category>All</tds:Category></tds:GetCapabilities>`
-	data, err := c.soapCall(c.DeviceURL, body)
+	data, err := c.soapCall(c.DeviceURL, "http://www.onvif.org/ver10/device/wsdl/GetCapabilities", body)
 	if err != nil {
 		return err
 	}
@@ -199,7 +203,7 @@ func (c *Client) getProfiles() error {
 		c.MediaURL = strings.Replace(c.DeviceURL, "device_service", "Media", 1)
 	}
 	body := `<trt:GetProfiles/>`
-	data, err := c.soapCall(c.MediaURL, body)
+	data, err := c.soapCall(c.MediaURL, "http://www.onvif.org/ver10/media/wsdl/GetProfiles", body)
 	if err != nil {
 		return err
 	}
@@ -244,7 +248,7 @@ func (c *Client) ContinuousMove(pan, tilt, zoom float64) error {
     <tt:Zoom x="%.4f"/>
   </tptz:Velocity>
 </tptz:ContinuousMove>`, c.ProfileToken, pan, tilt, zoom)
-	_, err := c.soapCall(c.PTZURL, body)
+	_, err := c.soapCall(c.PTZURL, "http://www.onvif.org/ver20/ptz/wsdl/ContinuousMove", body)
 	return err
 }
 
@@ -255,7 +259,7 @@ func (c *Client) Stop() error {
   <tptz:PanTilt>true</tptz:PanTilt>
   <tptz:Zoom>true</tptz:Zoom>
 </tptz:Stop>`, c.ProfileToken)
-	_, err := c.soapCall(c.PTZURL, body)
+	_, err := c.soapCall(c.PTZURL, "http://www.onvif.org/ver20/ptz/wsdl/Stop", body)
 	return err
 }
 
@@ -276,7 +280,7 @@ func (c *Client) FocusMove(speed float64) error {
     <tt:Continuous><tt:Speed>%.4f</tt:Speed></tt:Continuous>
   </timg:Focus>
 </timg:Move>`, c.VSToken, speed)
-	_, err := c.soapCall(c.ImagingURL, body)
+	_, err := c.soapCall(c.ImagingURL, "http://www.onvif.org/ver20/imaging/wsdl/Move", body)
 	return err
 }
 
@@ -288,7 +292,7 @@ func (c *Client) FocusStop() error {
 	body := fmt.Sprintf(`<timg:Stop>
   <timg:VideoSourceToken>%s</timg:VideoSourceToken>
 </timg:Stop>`, c.VSToken)
-	_, err := c.soapCall(c.ImagingURL, body)
+	_, err := c.soapCall(c.ImagingURL, "http://www.onvif.org/ver20/imaging/wsdl/Stop", body)
 	return err
 }
 
@@ -308,6 +312,6 @@ func (c *Client) SetFocusAuto(auto bool) error {
   </timg:ImagingSettings>
   <timg:ForcePersistence>true</timg:ForcePersistence>
 </timg:SetImagingSettings>`, c.VSToken, mode)
-	_, err := c.soapCall(c.ImagingURL, body)
+	_, err := c.soapCall(c.ImagingURL, "http://www.onvif.org/ver20/imaging/wsdl/SetImagingSettings", body)
 	return err
 }
