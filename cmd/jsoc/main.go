@@ -1,9 +1,14 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jsoc/camviewer/internal/config"
@@ -22,6 +27,9 @@ func main() {
 	if err := os.MkdirAll(cfg.DataDir, 0700); err != nil {
 		log.Fatalf("create data dir: %v", err)
 	}
+	if err := setupFileLogging(cfg.DataDir); err != nil {
+		log.Fatalf("setup file logging: %v", err)
+	}
 
 	// ── Persistent stores ─────────────────────────────────────────────────────
 	st, err := store.New(cfg.DataDir)
@@ -32,6 +40,10 @@ func main() {
 	sett, err := settings.New(cfg.DataDir)
 	if err != nil {
 		log.Fatalf("open settings: %v", err)
+	}
+	startupPassword := resolveStartupPassword(cfg.AdminPassword, sett.Get().AdminPassword)
+	if err := sett.EnsureAdminPassword(startupPassword); err != nil {
+		log.Fatalf("persist admin password: %v", err)
 	}
 
 	// ── Streaming manager ─────────────────────────────────────────────────────
@@ -86,7 +98,7 @@ func main() {
 	staticFS := http.Dir("static")
 	webSrv := web.NewServer(
 		st, mgr, ptzMgr, sett,
-		cfg.AdminPassword,
+		startupPassword,
 		cfg.RTSPHost, rtspPort, cfg.StreamPathPrefix,
 		staticFS,
 	)
@@ -100,4 +112,71 @@ func main() {
 	if err := http.Serve(httpLn, webSrv.Handler()); err != nil {
 		log.Fatalf("http serve: %v", err)
 	}
+}
+
+func resolveStartupPassword(envPassword, storedPassword string) string {
+	if envPassword != "" {
+		return envPassword
+	}
+	if storedPassword != "" {
+		return storedPassword
+	}
+	pw := randomPassword()
+	log.Printf("╔══════════════════════════════════════════╗")
+	log.Printf("║  JSOC NVR — no JSOC_PASSWORD set         ║")
+	log.Printf("║  Generated password: %-20s  ║", pw)
+	log.Printf("║  Saved in settings.json for reuse        ║")
+	log.Printf("╚══════════════════════════════════════════╝")
+	return pw
+}
+
+func randomPassword() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "changeme"
+	}
+	return hex.EncodeToString(b)
+}
+
+func setupFileLogging(dataDir string) error {
+	logsDir := filepath.Join(dataDir, "logs")
+	if err := os.MkdirAll(logsDir, 0700); err != nil {
+		return err
+	}
+	allFile, err := os.OpenFile(filepath.Join(logsDir, "system.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	errFile, err := os.OpenFile(filepath.Join(logsDir, "system.error"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+
+	log.SetOutput(&splitLogWriter{
+		all: io.MultiWriter(os.Stdout, allFile),
+		err: io.MultiWriter(os.Stderr, errFile),
+	})
+	return nil
+}
+
+type splitLogWriter struct {
+	all io.Writer
+	err io.Writer
+}
+
+func (w *splitLogWriter) Write(p []byte) (int, error) {
+	n, err := w.all.Write(p)
+	if isErrorLogLine(p) {
+		_, _ = w.err.Write(p)
+	}
+	return n, err
+}
+
+func isErrorLogLine(p []byte) bool {
+	line := strings.ToLower(string(p))
+	return strings.Contains(line, " error") ||
+		strings.Contains(line, "failed") ||
+		strings.Contains(line, "fatal") ||
+		strings.Contains(line, "panic") ||
+		strings.Contains(line, "unauthorized")
 }

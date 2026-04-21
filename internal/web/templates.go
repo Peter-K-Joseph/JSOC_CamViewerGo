@@ -7,7 +7,8 @@ const appLoginTmpl = `<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>JSOC NVR — Login</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <script>(function(){function a(t){var p=(t==='light'||t==='dark'||t==='system')?t:'system';var v=p==='system'?(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):p;document.documentElement.setAttribute('data-theme',v);document.documentElement.style.colorScheme=v;return p;}var pref='system';try{pref=localStorage.getItem('jsoc-theme')||'system';}catch(e){}a(pref);window.setTheme=function(t){var p=a(t);try{localStorage.setItem('jsoc-theme',p);}catch(e){}};})()</script>
+  <link rel="stylesheet" href="/static/app.css?v=20260421b">
 </head>
 <body style="display:flex;align-items:center;justify-content:center;height:100vh;background:var(--bg)">
 <div class="login-card" style="width:320px">
@@ -109,7 +110,8 @@ const baseTmpl = `<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>JSOC NVR</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <script>(function(){function a(t){var p=(t==='light'||t==='dark'||t==='system')?t:'system';var v=p==='system'?(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):p;document.documentElement.setAttribute('data-theme',v);document.documentElement.style.colorScheme=v;return p;}var pref='system';try{pref=localStorage.getItem('jsoc-theme')||'system';}catch(e){}a(pref);window.setTheme=function(t){var p=a(t);try{localStorage.setItem('jsoc-theme',p);}catch(e){}};})()</script>
+  <link rel="stylesheet" href="/static/app.css?v=20260421b">
 </head>
 <body>
 <aside class="sidebar">
@@ -302,8 +304,8 @@ const dashboardTmpl = `{{define "content"}}
 {{end}}
 
 {{define "scripts"}}
-<script src="/static/player.js"></script>
-<script src="/static/dashboard.js"></script>
+<script src="/static/player.js?v=20260421b"></script>
+<script src="/static/dashboard.js?v=20260421b"></script>
 <script>
 const DIRECT_MODE     = {{.DirectMode}};
 const DIRECT_WINDOWED = {{.DirectWindowed}};
@@ -335,7 +337,7 @@ const discoverTmpl = `{{define "content"}}
 {{end}}
 
 {{define "scripts"}}
-<script src="/static/discover.js"></script>
+<script src="/static/discover.js?v=20260421b"></script>
 {{end}}`
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -391,7 +393,7 @@ const configTmpl = `{{define "content"}}
 {{end}}
 
 {{define "scripts"}}
-<script src="/static/config.js"></script>
+<script src="/static/config.js?v=20260421b"></script>
 {{end}}`
 
 // ── Login ─────────────────────────────────────────────────────────────────────
@@ -445,7 +447,7 @@ const loginTmpl = `{{define "content"}}
 <script>
 const CAMERA_ID = "{{.Camera.ID}}";
 </script>
-<script src="/static/login.js"></script>
+<script src="/static/login.js?v=20260421b"></script>
 {{end}}`
 
 // ── Viewer (standalone fullscreen) ────────────────────────────────────────────
@@ -469,7 +471,7 @@ const viewerTmpl = `{{define "content"}}
 {{end}}
 
 {{define "scripts"}}
-<script src="/static/player.js"></script>
+<script src="/static/player.js?v=20260421b"></script>
 <script>
   const v = document.getElementById('main-video');
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -491,6 +493,22 @@ const preferencesTmpl = `{{define "content"}}
     ✓ Settings saved
   </div>
   <div id="pref-error" class="hidden" style="background:rgba(239,68,68,.12);border:1px solid #ef4444;border-radius:6px;padding:0.5rem 0.9rem;margin-bottom:1rem;font-size:0.82rem;color:#ef4444"></div>
+
+  {{/* ── Appearance ── */}}
+  <div class="pref-section">
+    <div class="pref-section-title">Appearance</div>
+    <div class="pref-row">
+      <div class="pref-label">
+        <span>Theme</span>
+        <span class="pref-desc">Choose dark, light, or follow your system setting.</span>
+      </div>
+      <select id="pref-theme">
+        <option value="dark">Dark</option>
+        <option value="system">System</option>
+        <option value="light">Light</option>
+      </select>
+    </div>
+  </div>
 
   {{/* ── System ── */}}
   <div class="pref-section">
@@ -546,12 +564,6 @@ const preferencesTmpl = `{{define "content"}}
         <label class="radio-row">
           <input type="radio" name="pref-proto" value="rtsp"  {{if eq .Settings.StreamProtocol "rtsp" }}checked{{end}}> RTSP TCP — standard port 554, Digest auth
         </label>
-        <label class="radio-row">
-          <input type="radio" name="pref-proto" value="dvrip" {{if eq .Settings.StreamProtocol "dvrip"}}checked{{end}}> DVRIP — Dahua private protocol, port 37777
-        </label>
-        <label class="radio-row" style="opacity:.45">
-          <input type="radio" name="pref-proto" value="rtmp"  {{if eq .Settings.StreamProtocol "rtmp" }}checked{{end}} disabled> RTMP (camera-push only — not yet supported)
-        </label>
       </div>
     </div>
 
@@ -602,5 +614,5 @@ const preferencesTmpl = `{{define "content"}}
 {{end}}
 
 {{define "scripts"}}
-<script src="/static/settings.js"></script>
+<script src="/static/settings.js?v=20260421b"></script>
 {{end}}`

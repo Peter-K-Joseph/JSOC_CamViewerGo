@@ -18,7 +18,6 @@ const (
 	ProtocolWS    Protocol = "ws"    // Dahua /rtspoverwebsocket (default)
 	ProtocolRTSP  Protocol = "rtsp"  // Standard RTSP TCP port 554
 	ProtocolRTMP  Protocol = "rtmp"  // Camera-push RTMP (requires camera config — future)
-	ProtocolDVRIP Protocol = "dvrip" // Dahua private protocol TCP port 37777
 )
 
 // Settings holds all user-configurable preferences.
@@ -77,6 +76,23 @@ func (s *Store) Get() Settings {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return *s.data
+}
+
+// EnsureAdminPassword persists password if and only if no admin password is
+// currently stored. This keeps the first generated password stable across
+// restarts while preserving user-changed passwords.
+func (s *Store) EnsureAdminPassword(password string) error {
+	if password == "" {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.data.AdminPassword != "" {
+		return nil
+	}
+	s.data.AdminPassword = password
+	return s.save()
 }
 
 // Update applies a partial update (only non-zero fields in patch are written)

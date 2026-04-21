@@ -1,11 +1,11 @@
 'use strict';
 
 /**
- * CanvasPlayer — streams Annex-B H.264 AccessUnits from /ws/annexb/{key}
+ * CanvasPlayer — streams Annex-B H.264/H.265 AccessUnits from /ws/annexb/{key}
  * and renders decoded frames to a canvas via WebCodecs VideoDecoder.
  *
  * Protocol:
- *   1. First WS message (text): JSON {"codec":"avc1.4D001E","format":"annexb-h264-v1"}
+ *   1. First WS message (text): JSON {"codec":"avc1.4D001E","streamCodec":"h264","format":"annexb-v1"}
  *   2. Subsequent WS messages (binary): [1-byte flags][8-byte pts-us][Annex-B access unit]
  *      - flags bit0: keyframe
  */
@@ -18,6 +18,7 @@ class CanvasPlayer {
     this.ws = null;
     this.decoder = null;
     this.codec = null;
+    this.streamCodec = null;
     this.destroyed = false;
     this.started = false;
     this.fallbackActive = false;
@@ -99,7 +100,8 @@ class CanvasPlayer {
             return;
           }
           this.codec = info.codec || 'avc1.42E01E';
-          this._setupDecoder(this.codec);
+          this.streamCodec = info.streamCodec || (this.codec.startsWith('hvc1') || this.codec.startsWith('hev1') ? 'h265' : 'h264');
+          this._setupDecoder(this.codec, this.streamCodec);
         } catch (err) {
           this._fallback('invalid stream metadata');
         }
@@ -131,7 +133,7 @@ class CanvasPlayer {
     };
   }
 
-  _setupDecoder(codec) {
+  _setupDecoder(codec, streamCodec) {
     if (this.decoder || this.destroyed) return;
     try {
       this.decoder = new VideoDecoder({
@@ -142,27 +144,60 @@ class CanvasPlayer {
         },
       });
 
-      const config = {
-        codec,
-        optimizeForLatency: true,
-        hardwareAcceleration: 'prefer-hardware',
-        avc: { format: 'annexb' },
-      };
+      const candidates = this._decoderConfigCandidates(codec, streamCodec);
+      let configured = false;
+      let lastErr = null;
 
-      try {
-        this.decoder.configure(config);
-      } catch (_) {
-        // Some browsers reject avc.format; retry with a minimal config.
-        this.decoder.configure({
-          codec,
-          optimizeForLatency: true,
-          hardwareAcceleration: 'prefer-hardware',
-        });
+      for (const cfg of candidates) {
+        try {
+          this.decoder.configure(cfg);
+          configured = true;
+          this.codec = cfg.codec;
+          break;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+
+      if (!configured) {
+        throw lastErr || new Error('no supported decoder config');
       }
     } catch (err) {
       console.error('[CanvasPlayer] decoder setup failed', err);
-      this._fallback('failed to initialize video decoder');
+      this._fallback('failed to initialize video decoder for ' + (streamCodec || 'unknown'));
     }
+  }
+
+  _decoderConfigCandidates(codec, streamCodec) {
+    const base = {
+      optimizeForLatency: true,
+      hardwareAcceleration: 'prefer-hardware',
+    };
+
+    const dedupe = new Set();
+    const out = [];
+    const push = (cfg) => {
+      const key = JSON.stringify(cfg);
+      if (!dedupe.has(key)) {
+        dedupe.add(key);
+        out.push(cfg);
+      }
+    };
+
+    if (streamCodec === 'h265' || /^hvc1|^hev1/.test(codec)) {
+      push({ ...base, codec });
+      push({ ...base, codec: codec.replace(/^hvc1/, 'hev1') });
+      push({ ...base, codec: codec.replace(/^hev1/, 'hvc1') });
+      push({ ...base, codec: 'hvc1.1.6.L93.B0' });
+      push({ ...base, codec: 'hev1.1.6.L93.B0' });
+      return out;
+    }
+
+    push({ ...base, codec, avc: { format: 'annexb' } });
+    push({ ...base, codec });
+    push({ ...base, codec: 'avc1.42E01E', avc: { format: 'annexb' } });
+    push({ ...base, codec: 'avc1.42E01E' });
+    return out;
   }
 
   _handleFrameBinary(data) {

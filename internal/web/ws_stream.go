@@ -156,7 +156,7 @@ func (s *Server) handleWSStreamByID(w http.ResponseWriter, r *http.Request) {
 
 // handleWSAnnexB handles GET /ws/annexb/{streamKey}
 // Protocol:
-//  1. Send JSON text: {"codec":"avc1.4D001E","format":"annexb-h264-v1"}
+//  1. Send JSON text: {"codec":"avc1.4D001E","streamCodec":"h264","format":"annexb-v1"}
 //  2. Send binary frames: 1-byte flags + 8-byte pts-us + Annex-B AU bytes
 //     flags bit0 = keyframe
 func (s *Server) handleWSAnnexB(w http.ResponseWriter, r *http.Request) {
@@ -191,21 +191,23 @@ func (s *Server) handleWSAnnexB(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if codec != "h264" {
+	if codec != "h264" && codec != "h265" {
 		msg := map[string]string{
 			"error":  "codec_not_supported",
-			"detail": "annexb websocket currently supports only h264",
+			"detail": "annexb websocket currently supports only h264/h265",
 		}
 		_ = conn.WriteMessage(websocket.TextMessage, mustJSON(msg))
 		return
 	}
 
 	info := struct {
-		Codec  string `json:"codec"`
-		Format string `json:"format"`
+		Codec       string `json:"codec"`
+		StreamCodec string `json:"streamCodec"`
+		Format      string `json:"format"`
 	}{
-		Codec:  mux.CodecString(codec, sps),
-		Format: "annexb-h264-v1",
+		Codec:       mux.CodecString(codec, sps),
+		StreamCodec: codec,
+		Format:      "annexb-v1",
 	}
 	if err := conn.WriteMessage(websocket.TextMessage, mustJSON(info)); err != nil {
 		return
@@ -225,9 +227,15 @@ func (s *Server) handleWSAnnexB(w http.ResponseWriter, r *http.Request) {
 
 		payload := au.Data
 		if au.Keyframe {
-			_, curSPS, curPPS, _ := track.Params()
-			if len(curSPS) > 0 && !bytes.Contains(payload, curSPS) {
-				payload = prependNALUnits(payload, curSPS, curPPS)
+			_, curSPS, curPPS, curVPS := track.Params()
+			if len(curSPS) > 0 {
+				needsPrefix := !bytes.Contains(payload, curSPS)
+				if codec == "h265" && len(curVPS) > 0 && !bytes.Contains(payload, curVPS) {
+					needsPrefix = true
+				}
+				if needsPrefix {
+					payload = prependCodecParams(codec, payload, curVPS, curSPS, curPPS)
+				}
 			}
 		}
 
@@ -289,11 +297,22 @@ func mustJSON(v any) []byte {
 	return b
 }
 
-func prependNALUnits(payload, sps, pps []byte) []byte {
+func prependCodecParams(codec string, payload, vps, sps, pps []byte) []byte {
 	if len(sps) == 0 {
 		return payload
 	}
-	out := make([]byte, 0, len(payload)+16+len(sps)+len(pps))
+
+	prefixLen := 16 + len(sps) + len(pps)
+	if codec == "h265" {
+		prefixLen += 8 + len(vps)
+	}
+	out := make([]byte, 0, len(payload)+prefixLen)
+
+	if codec == "h265" && len(vps) > 0 {
+		out = append(out, 0x00, 0x00, 0x00, 0x01)
+		out = append(out, vps...)
+	}
+
 	out = append(out, 0x00, 0x00, 0x00, 0x01)
 	out = append(out, sps...)
 	if len(pps) > 0 {

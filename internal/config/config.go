@@ -1,9 +1,6 @@
 package config
 
 import (
-	"crypto/rand"
-	"encoding/hex"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,7 +15,7 @@ type Config struct {
 
 	NativeWSKeepaliveInterval float64
 	StreamPathPrefix          string
-	AdminPassword             string // set via JSOC_PASSWORD; auto-generated if empty
+	AdminPassword             string // set via JSOC_PASSWORD; may be empty
 }
 
 func Load() *Config {
@@ -26,14 +23,6 @@ func Load() *Config {
 	dataDir := getEnv("JSOC_DATA_DIR", filepath.Join(home, ".jsoc_camviewer"))
 
 	password := getEnv("JSOC_PASSWORD", "")
-	if password == "" {
-		password = randomPassword()
-		log.Printf("╔══════════════════════════════════════════╗")
-		log.Printf("║  JSOC NVR — no JSOC_PASSWORD set         ║")
-		log.Printf("║  Generated password: %-20s  ║", password)
-		log.Printf("║  Set JSOC_PASSWORD to silence this       ║")
-		log.Printf("╚══════════════════════════════════════════╝")
-	}
 
 	return &Config{
 		DataDir:                   dataDir,
@@ -45,14 +34,6 @@ func Load() *Config {
 		StreamPathPrefix:          getEnv("JSOC_STREAM_PREFIX", "cam"),
 		AdminPassword:             password,
 	}
-}
-
-func randomPassword() string {
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		return "changeme"
-	}
-	return hex.EncodeToString(b)
 }
 
 func getEnv(key, def string) string {

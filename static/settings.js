@@ -1,5 +1,58 @@
 /* Preferences page — settings.js */
 
+// ── Theme ─────────────────────────────────────────────────────────────────────
+(function () {
+  const sel = document.getElementById('pref-theme');
+  if (!sel) return;
+  let stored = 'system';
+  try {
+    stored = localStorage.getItem('jsoc-theme') || 'system';
+  } catch (_) {
+    stored = 'system';
+  }
+  sel.value = stored;
+  sel.addEventListener('change', function () {
+    if (typeof window.setTheme === 'function') {
+      window.setTheme(sel.value);
+    }
+  });
+})();
+
+window.setTheme = function (t) {
+  const next = (t === 'light' || t === 'dark' || t === 'system') ? t : 'system';
+  try {
+    localStorage.setItem('jsoc-theme', next);
+  } catch (_) {
+    // Ignore localStorage errors (private mode / restricted storage).
+  }
+  const applied = next === 'system'
+    ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+    : next;
+  document.documentElement.setAttribute('data-theme', applied);
+  document.documentElement.style.colorScheme = applied;
+};
+
+(function () {
+  const media = window.matchMedia('(prefers-color-scheme: light)');
+  const onSystemThemeChange = function () {
+    let pref = 'system';
+    try {
+      pref = localStorage.getItem('jsoc-theme') || 'system';
+    } catch (_) {
+      pref = 'system';
+    }
+    if (pref === 'system') {
+      window.setTheme('system');
+    }
+  };
+
+  if (typeof media.addEventListener === 'function') {
+    media.addEventListener('change', onSystemThemeChange);
+  } else if (typeof media.addListener === 'function') {
+    media.addListener(onSystemThemeChange);
+  }
+})();
+
 (function () {
   const saved  = document.getElementById('pref-saved');
   const errBox = document.getElementById('pref-error');
