@@ -4,7 +4,7 @@ package mux
 import "fmt"
 
 const (
-	timescale      = 90000 // matches RTP clock rate
+	timescale       = 90000 // matches RTP clock rate
 	defaultDuration = 3000  // 90000/30fps — overridden by real timestamp delta
 )
 
@@ -138,8 +138,8 @@ func mvhd() []byte {
 		u32(0x00010000), u32(0), u32(0),
 		u32(0), u32(0x00010000), u32(0),
 		u32(0), u32(0), u32(0x40000000),
-		zeros(24),       // pre-defined
-		u32(2),          // next-track-ID
+		zeros(24), // pre-defined
+		u32(2),    // next-track-ID
 	))
 }
 
@@ -176,10 +176,10 @@ func tkhd() []byte {
 		u32(0), // reserved
 		u32(0), // duration = 0 (live)
 		zeros(8),
-		u16(0),  // layer
-		u16(0),  // alternate_group
-		u16(0),  // volume (video = 0)
-		u16(0),  // reserved
+		u16(0), // layer
+		u16(0), // alternate_group
+		u16(0), // volume (video = 0)
+		u16(0), // reserved
 		// identity matrix
 		u32(0x00010000), u32(0), u32(0),
 		u32(0), u32(0x00010000), u32(0),
@@ -210,9 +210,9 @@ func mdhd() []byte {
 
 func hdlr() []byte {
 	return fullbox("hdlr", 0, 0, cat(
-		u32(0),             // pre-defined
-		[]byte("vide"),     // handler_type
-		zeros(12),          // reserved
+		u32(0),         // pre-defined
+		[]byte("vide"), // handler_type
+		zeros(12),      // reserved
 		[]byte("VideoHandler\x00"),
 	))
 }
@@ -292,15 +292,15 @@ func avcCBox(sps, pps []byte) []byte {
 		level = sps[3]
 	}
 	payload := cat(
-		u8(1),           // configurationVersion
+		u8(1), // configurationVersion
 		u8(profile),
 		u8(compat),
 		u8(level),
-		u8(0xFF),        // lengthSizeMinusOne = 3 (4-byte lengths)
-		u8(0xE1),        // numSequenceParameterSets = 1
+		u8(0xFF), // lengthSizeMinusOne = 3 (4-byte lengths)
+		u8(0xE1), // numSequenceParameterSets = 1
 		u16(uint16(len(sps))),
 		sps,
-		u8(1),           // numPictureParameterSets
+		u8(1), // numPictureParameterSets
 		u16(uint16(len(pps))),
 		pps,
 	)
@@ -340,19 +340,19 @@ func hvcCBox(sps, pps, vps []byte) []byte {
 	nals = append(nals, hvcArrayEntry(0x22, pps)...)
 
 	payload := cat(
-		u8(1),      // configurationVersion
-		u8(0),      // general_profile_space(2)|general_tier_flag(1)|general_profile_idc(5)
-		u32(0),     // general_profile_compatibility_flags
-		zeros(6),   // general_constraint_indicator_flags
-		u8(0),      // general_level_idc
+		u8(1),       // configurationVersion
+		u8(0),       // general_profile_space(2)|general_tier_flag(1)|general_profile_idc(5)
+		u32(0),      // general_profile_compatibility_flags
+		zeros(6),    // general_constraint_indicator_flags
+		u8(0),       // general_level_idc
 		u16(0xF000), // min_spatial_segmentation_idc (reserved 0xF000)
-		u8(0xFC),   // parallelismType (reserved 0xFC)
-		u8(0xFD),   // chromaFormat (reserved 0xFC | chroma_format_idc)
-		u8(0xF8),   // bitDepthLumaMinus8 (reserved 0xF8)
-		u8(0xF8),   // bitDepthChromaMinus8
-		u16(0),     // avgFrameRate
-		u8(0x0F),   // constantFrameRate(2)|numTemporalLayers(3)|temporalIdNested(1)|lengthSizeMinusOne(2) = 0x0F
-		u8(3),      // numOfArrays
+		u8(0xFC),    // parallelismType (reserved 0xFC)
+		u8(0xFD),    // chromaFormat (reserved 0xFC | chroma_format_idc)
+		u8(0xF8),    // bitDepthLumaMinus8 (reserved 0xF8)
+		u8(0xF8),    // bitDepthChromaMinus8
+		u16(0),      // avgFrameRate
+		u8(0x0F),    // constantFrameRate(2)|numTemporalLayers(3)|temporalIdNested(1)|lengthSizeMinusOne(2) = 0x0F
+		u8(3),       // numOfArrays
 	)
 	payload = cat(payload, nals)
 	return box("hvcC", payload)
@@ -419,10 +419,10 @@ func buildTrun(dur uint32, keyframe bool, dataLen int, dataOffset int32) []byte 
 	doff := u32(uint32(dataOffset))
 
 	return fullbox("trun", 0, flags, cat(
-		u32(1),          // sample_count
-		doff,            // data_offset
-		u32(sampleFlags), // first_sample_flags
-		u32(dur),        // sample_duration
+		u32(1),               // sample_count
+		doff,                 // data_offset
+		u32(sampleFlags),     // first_sample_flags
+		u32(dur),             // sample_duration
 		u32(uint32(dataLen)), // sample_size
 	))
 }
