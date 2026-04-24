@@ -160,6 +160,13 @@ func (d *H264Depacketizer) emitSingle(nal []byte, ts uint32) *AccessUnit {
 		d.PPS = clone(nal)
 	}
 
+	// Suppress standalone parameter set NALs — they are stored above and
+	// prepended to the next IDR.  Emitting them as individual AccessUnits
+	// causes decoders to produce green/corrupt frames.
+	if nalType == 7 || nalType == 8 {
+		return nil
+	}
+
 	var buf []byte
 	if nalType == 5 {
 		// IDR: prepend SPS+PPS
@@ -175,12 +182,11 @@ func (d *H264Depacketizer) emitSingle(nal []byte, ts uint32) *AccessUnit {
 	buf = append(buf, annexBStart...)
 	buf = append(buf, nal...)
 
-	keyframe := nalType == 5 || nalType == 7
 	return &AccessUnit{
 		Codec:     "h264",
 		Timestamp: ts,
 		Data:      buf,
-		Keyframe:  keyframe,
+		Keyframe:  nalType == 5,
 	}
 }
 
@@ -276,6 +282,13 @@ func (d *H265Depacketizer) emitSingle(nal []byte, ts uint32) *AccessUnit {
 		d.PPS = clone(nal)
 	}
 
+	// Suppress standalone parameter set NALs (VPS/SPS/PPS).  They are stored
+	// above and prepended to the next IDR.  Emitting them individually causes
+	// decoders to produce green/corrupt frames.
+	if nalType == 32 || nalType == 33 || nalType == 34 {
+		return nil
+	}
+
 	var buf []byte
 	isIDR := nalType == 19 || nalType == 20
 	if isIDR {
@@ -299,7 +312,7 @@ func (d *H265Depacketizer) emitSingle(nal []byte, ts uint32) *AccessUnit {
 		Codec:     "h265",
 		Timestamp: ts,
 		Data:      buf,
-		Keyframe:  isIDR || nalType == 32,
+		Keyframe:  isIDR,
 	}
 }
 

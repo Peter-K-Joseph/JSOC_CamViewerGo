@@ -198,11 +198,11 @@ func TestMediaSegment_SequenceNumber(t *testing.T) {
 	}
 }
 
-// ── splitAnnexB ───────────────────────────────────────────────────────────────
+// ── SplitAnnexB ───────────────────────────────────────────────────────────────
 
 func TestSplitAnnexB_Three(t *testing.T) {
 	data := []byte{0x00, 0x00, 0x01, 0xAA, 0xBB}
-	nals := splitAnnexB(data)
+	nals := SplitAnnexB(data)
 	if len(nals) != 1 {
 		t.Fatalf("want 1 NAL, got %d", len(nals))
 	}
@@ -216,7 +216,7 @@ func TestSplitAnnexB_TwoNALs_FourByteStart(t *testing.T) {
 		0x00, 0x00, 0x00, 0x01, 0x67, 0x42,
 		0x00, 0x00, 0x00, 0x01, 0x68, 0xCE,
 	}
-	nals := splitAnnexB(data)
+	nals := SplitAnnexB(data)
 	if len(nals) != 2 {
 		t.Fatalf("want 2 NALs, got %d", len(nals))
 	}
@@ -229,7 +229,7 @@ func TestSplitAnnexB_TwoNALs_FourByteStart(t *testing.T) {
 }
 
 func TestSplitAnnexB_Empty(t *testing.T) {
-	if nals := splitAnnexB(nil); len(nals) != 0 {
+	if nals := SplitAnnexB(nil); len(nals) != 0 {
 		t.Errorf("expected no NALs from empty input, got %d", len(nals))
 	}
 }

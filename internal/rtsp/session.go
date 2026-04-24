@@ -2,14 +2,16 @@ package rtsp
 
 import (
 	"bufio"
+	"crypto/rand"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"log"
-	"math/rand"
 	"net"
 	"strings"
 	"time"
 
+	"github.com/jsoc/camviewer/internal/mux"
 	"github.com/jsoc/camviewer/internal/streaming"
 )
 
@@ -37,7 +39,9 @@ type session struct {
 }
 
 func newSession(conn net.Conn, trackFunc func(string) *streaming.Track, host, prefix string) *session {
-	id := fmt.Sprintf("%08x", rand.Uint32())
+	b := make([]byte, 8)
+	rand.Read(b) //nolint:errcheck
+	id := hex.EncodeToString(b)
 	return &session{
 		conn:      conn,
 		reader:    bufio.NewReader(conn),
@@ -144,7 +148,7 @@ const maxRTPPayload = 1400
 // writeAccessUnit re-packetizes an AnnexB AccessUnit into RTP and sends over TCP interleaved.
 func (s *session) writeAccessUnit(au streaming.AccessUnit) error {
 	// Strip AnnexB start codes and collect raw NAL units
-	nals := splitAnnexB(au.Data)
+	nals := mux.SplitAnnexB(au.Data)
 	ts := au.Timestamp
 
 	for i, nal := range nals {
@@ -160,8 +164,46 @@ func (s *session) writeAccessUnit(au streaming.AccessUnit) error {
 				return err
 			}
 			s.seqNum++
+		} else if au.Codec == "h265" {
+			// H.265 FU (Fragmentation Unit) — RFC 7798 §4.4.3
+			// NAL header is 2 bytes; FU header adds a 3rd byte.
+			if len(nal) < 2 {
+				continue
+			}
+			nalHdr0 := nal[0]
+			nalHdr1 := nal[1]
+			nalType := (nalHdr0 >> 1) & 0x3f
+			nal = nal[2:] // strip 2-byte NAL header
+
+			// FU indicator: same as original but with nalType = 49 (FU)
+			fuIndicator0 := (nalHdr0 & 0x81) | (49 << 1)
+			fuIndicator1 := nalHdr1
+			first := true
+			for len(nal) > 0 {
+				chunk := nal
+				if len(chunk) > maxRTPPayload-3 {
+					chunk = nal[:maxRTPPayload-3]
+				}
+				nal = nal[len(chunk):]
+				last := len(nal) == 0
+
+				fuHeader := nalType
+				if first {
+					fuHeader |= 0x80
+				}
+				if last {
+					fuHeader |= 0x40
+				}
+				payload := append([]byte{fuIndicator0, fuIndicator1, fuHeader}, chunk...)
+				pkt := s.buildRTPPacket(96, ts, last && marker, payload)
+				if err := s.writeInterleaved(0, pkt); err != nil {
+					return err
+				}
+				s.seqNum++
+				first = false
+			}
 		} else {
-			// FU-A fragmentation (H.264 only path; H.265 uses same logic)
+			// H.264 FU-A fragmentation — RFC 6184 §5.8
 			nalHdr := nal[0]
 			nalType := nalHdr & 0x1f
 			nal = nal[1:]
@@ -311,29 +353,3 @@ func rtspStatus(code int) string {
 	}
 }
 
-// splitAnnexB splits AnnexB byte stream into raw NAL units (strips start codes).
-func splitAnnexB(data []byte) [][]byte {
-	var nals [][]byte
-	start := -1
-	for i := 0; i < len(data)-3; i++ {
-		if data[i] == 0 && data[i+1] == 0 {
-			if data[i+2] == 1 {
-				if start >= 0 {
-					nals = append(nals, data[start:i])
-				}
-				start = i + 3
-				i += 2
-			} else if i+3 < len(data) && data[i+2] == 0 && data[i+3] == 1 {
-				if start >= 0 {
-					nals = append(nals, data[start:i])
-				}
-				start = i + 4
-				i += 3
-			}
-		}
-	}
-	if start >= 0 && start < len(data) {
-		nals = append(nals, data[start:])
-	}
-	return nals
-}

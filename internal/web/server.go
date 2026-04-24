@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"fmt"
 	"html/template"
 	"log"
@@ -70,6 +71,12 @@ func (s *Server) buildRouter(staticFS http.FileSystem) *chi.Mux {
 	// Everything else requires a valid session.
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireAuth)
+		r.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB
+				next.ServeHTTP(w, r)
+			})
+		})
 
 		r.Post("/ui/logout", s.handleAppLogout)
 
@@ -209,10 +216,14 @@ func (s *Server) renderPlain(w http.ResponseWriter, name string, data any) {
 		http.Error(w, "unknown template: "+name, 500)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := t.Execute(w, data); err != nil {
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, data); err != nil {
 		log.Printf("[web] template %s: %v", name, err)
+		http.Error(w, "render error", 500)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf.WriteTo(w) //nolint:errcheck
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
@@ -221,9 +232,12 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 		http.Error(w, "unknown template: "+name, 500)
 		return
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := t.ExecuteTemplate(w, "base.html", data); err != nil {
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, "base.html", data); err != nil {
 		log.Printf("[web] template %s: %v", name, err)
 		http.Error(w, "render error", 500)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf.WriteTo(w) //nolint:errcheck
 }

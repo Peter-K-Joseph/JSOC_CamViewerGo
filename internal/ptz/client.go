@@ -4,6 +4,7 @@ package ptz
 
 import (
 	"bytes"
+	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha1" //nolint:gosec // ONVIF WS-Security mandates SHA1
 	"encoding/base64"
@@ -18,6 +19,12 @@ import (
 
 	"github.com/jsoc/camviewer/internal/netutil"
 )
+
+func xmlEscape(s string) string {
+	var b bytes.Buffer
+	xml.EscapeText(&b, []byte(s)) //nolint:errcheck // bytes.Buffer.Write never errors
+	return b.String()
+}
 
 // ── SOAP / WS-Security helpers ───────────────────────────────────────────────
 
@@ -63,20 +70,53 @@ func soapEnvelope(header, body string) string {
 }
 
 // soapCall sends a SOAP request and returns the raw response body.
-func (c *Client) soapCall(url, action, body string) ([]byte, error) {
+// It includes both WS-Security (in the SOAP envelope) and HTTP-level
+// Basic auth.  If the camera responds with 401 + Digest challenge,
+// the request is retried with HTTP Digest credentials.
+func (c *Client) soapCall(endpoint, action, body string) ([]byte, error) {
 	payload := soapEnvelope(wsseHeader(c.Username, c.password), body)
-	req, err := http.NewRequest("POST", url, bytes.NewBufferString(payload))
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBufferString(payload))
 	if err != nil {
 		return nil, err
 	}
 	// SOAP 1.1: Content-Type is text/xml; the action goes in the SOAPAction header.
 	req.Header.Set("Content-Type", "text/xml; charset=utf-8")
 	req.Header.Set("SOAPAction", fmt.Sprintf(`"%s"`, action))
+	req.SetBasicAuth(c.Username, c.password)
+
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// If the camera requires HTTP Digest, retry with Digest credentials.
+	if resp.StatusCode == 401 {
+		resp.Body.Close()
+		digestHdr := c.buildHTTPDigest(resp.Header.Get("WWW-Authenticate"), "POST", endpoint)
+		if digestHdr != "" {
+			req2, err := http.NewRequest("POST", endpoint, bytes.NewBufferString(payload))
+			if err != nil {
+				return nil, err
+			}
+			req2.Header.Set("Content-Type", "text/xml; charset=utf-8")
+			req2.Header.Set("SOAPAction", fmt.Sprintf(`"%s"`, action))
+			req2.Header.Set("Authorization", digestHdr)
+			resp2, err := c.http.Do(req2)
+			if err != nil {
+				return nil, err
+			}
+			defer resp2.Body.Close()
+			return c.handleSOAPResponse(resp2)
+		}
+		return nil, fmt.Errorf("HTTP 401: camera rejected credentials (no Digest challenge)")
+	}
+
+	return c.handleSOAPResponse(resp)
+}
+
+// handleSOAPResponse reads the body and checks for errors.
+func (c *Client) handleSOAPResponse(resp *http.Response) ([]byte, error) {
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -91,6 +131,50 @@ func (c *Client) soapCall(url, action, body string) ([]byte, error) {
 		return nil, fmt.Errorf("SOAP fault: %s", fault)
 	}
 	return data, nil
+}
+
+// buildHTTPDigest parses a WWW-Authenticate Digest challenge and returns the
+// Authorization header value, or "" if the challenge is not Digest.
+func (c *Client) buildHTTPDigest(challenge, method, uri string) string {
+	lower := strings.ToLower(challenge)
+	if !strings.HasPrefix(lower, "digest") {
+		return ""
+	}
+	realm := onvifDigestField(challenge, "realm")
+	nonce := onvifDigestField(challenge, "nonce")
+	if realm == "" || nonce == "" {
+		return ""
+	}
+	// Extract just the path from the full URL for the Digest URI.
+	digestURI := uri
+	if u, err := url.Parse(uri); err == nil {
+		digestURI = u.RequestURI()
+	}
+	ha1 := fmt.Sprintf("%x", md5.Sum([]byte(c.Username+":"+realm+":"+c.password)))
+	ha2 := fmt.Sprintf("%x", md5.Sum([]byte(method+":"+digestURI)))
+	response := fmt.Sprintf("%x", md5.Sum([]byte(ha1+":"+nonce+":"+ha2)))
+	return fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s"`,
+		c.Username, realm, nonce, digestURI, response)
+}
+
+func onvifDigestField(header, name string) string {
+	idx := strings.Index(strings.ToLower(header), strings.ToLower(name)+"=")
+	if idx < 0 {
+		return ""
+	}
+	val := header[idx+len(name)+1:]
+	if len(val) > 0 && val[0] == '"' {
+		val = val[1:]
+		end := strings.IndexByte(val, '"')
+		if end >= 0 {
+			return val[:end]
+		}
+	}
+	end := strings.IndexAny(val, ", ")
+	if end >= 0 {
+		return val[:end]
+	}
+	return val
 }
 
 // soapFault extracts a SOAP fault reason from a response, if present.
@@ -311,7 +395,7 @@ func (c *Client) ContinuousMove(pan, tilt, zoom float64) error {
     <tt:PanTilt x="%.4f" y="%.4f"/>
     <tt:Zoom x="%.4f"/>
   </tptz:Velocity>
-</tptz:ContinuousMove>`, c.ProfileToken, pan, tilt, zoom)
+</tptz:ContinuousMove>`, xmlEscape(c.ProfileToken), pan, tilt, zoom)
 	_, err := c.soapCall(c.PTZURL, "http://www.onvif.org/ver20/ptz/wsdl/ContinuousMove", body)
 	return err
 }
@@ -322,7 +406,7 @@ func (c *Client) Stop() error {
   <tptz:ProfileToken>%s</tptz:ProfileToken>
   <tptz:PanTilt>true</tptz:PanTilt>
   <tptz:Zoom>true</tptz:Zoom>
-</tptz:Stop>`, c.ProfileToken)
+</tptz:Stop>`, xmlEscape(c.ProfileToken))
 	_, err := c.soapCall(c.PTZURL, "http://www.onvif.org/ver20/ptz/wsdl/Stop", body)
 	return err
 }
@@ -343,7 +427,7 @@ func (c *Client) FocusMove(speed float64) error {
   <timg:Focus>
     <tt:Continuous><tt:Speed>%.4f</tt:Speed></tt:Continuous>
   </timg:Focus>
-</timg:Move>`, c.VSToken, speed)
+</timg:Move>`, xmlEscape(c.VSToken), speed)
 	_, err := c.soapCall(c.ImagingURL, "http://www.onvif.org/ver20/imaging/wsdl/Move", body)
 	return err
 }
@@ -355,7 +439,7 @@ func (c *Client) FocusStop() error {
 	}
 	body := fmt.Sprintf(`<timg:Stop>
   <timg:VideoSourceToken>%s</timg:VideoSourceToken>
-</timg:Stop>`, c.VSToken)
+</timg:Stop>`, xmlEscape(c.VSToken))
 	_, err := c.soapCall(c.ImagingURL, "http://www.onvif.org/ver20/imaging/wsdl/Stop", body)
 	return err
 }
@@ -375,7 +459,7 @@ func (c *Client) SetFocusAuto(auto bool) error {
     <tt:Focus><tt:AutoFocusMode>%s</tt:AutoFocusMode></tt:Focus>
   </timg:ImagingSettings>
   <timg:ForcePersistence>true</timg:ForcePersistence>
-</timg:SetImagingSettings>`, c.VSToken, mode)
+</timg:SetImagingSettings>`, xmlEscape(c.VSToken), xmlEscape(mode))
 	_, err := c.soapCall(c.ImagingURL, "http://www.onvif.org/ver20/imaging/wsdl/SetImagingSettings", body)
 	return err
 }

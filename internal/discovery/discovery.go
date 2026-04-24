@@ -3,10 +3,11 @@ package discovery
 import (
 	"encoding/xml"
 	"fmt"
-	"math/rand"
 	"net"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -50,9 +51,7 @@ type probeMatch struct {
 }
 
 func Discover(timeout time.Duration) ([]Device, error) {
-	msgID := fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		rand.Uint32(), rand.Uint32()&0xffff, rand.Uint32()&0xffff,
-		rand.Uint32()&0xffff, rand.Int63()&0xffffffffffff)
+	msgID := uuid.NewString()
 
 	probe := fmt.Sprintf(probeTemplate, msgID)
 

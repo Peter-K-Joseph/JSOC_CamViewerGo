@@ -96,7 +96,10 @@ func (s *Store) List() []*Camera {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]*Camera, len(s.cameras))
-	copy(out, s.cameras)
+	for i, c := range s.cameras {
+		cp := *c
+		out[i] = &cp
+	}
 	return out
 }
 

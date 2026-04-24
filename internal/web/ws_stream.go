@@ -6,18 +6,28 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/websocket"
 	"github.com/jsoc/camviewer/internal/mux"
-	"github.com/jsoc/camviewer/internal/streaming"
 )
 
 var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 256 * 1024,
-	CheckOrigin:     func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true // non-browser clients
+		}
+		u, err := url.Parse(origin)
+		if err != nil {
+			return false
+		}
+		return u.Host == r.Host
+	},
 }
 
 // handleWSStream handles GET /ws/stream/{streamKey}
@@ -277,19 +287,6 @@ func (s *Server) handleWSAnnexBByID(w http.ResponseWriter, r *http.Request) {
 	rctx := chi.RouteContext(r.Context())
 	rctx.URLParams.Add("streamKey", cam.StreamKey)
 	s.handleWSAnnexB(w, r)
-}
-
-// waitForTrack returns a *streaming.Track once it has params, or nil on timeout.
-func waitForTrack(track *streaming.Track, timeout time.Duration) *streaming.Track {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		_, sps, _, _ := track.Params()
-		if len(sps) > 0 {
-			return track
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return nil
 }
 
 func mustJSON(v any) []byte {

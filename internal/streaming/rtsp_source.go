@@ -10,6 +10,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -161,18 +162,35 @@ func (s *RtspSource) runOnce() error {
 	var h264dp H264Depacketizer
 	var h265dp H265Depacketizer
 
-	keepaliveTicker := time.NewTicker(s.keepaliveInterval)
-	defer keepaliveTicker.Stop()
+	// keepalive runs in its own goroutine so blocking reads don't delay OPTIONS.
+	var writeMu sync.Mutex
+	kaCseq := cseq
+	kaStop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(s.keepaliveInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-kaStop:
+				return
+			case <-s.stopCh:
+				return
+			case <-ticker.C:
+				writeMu.Lock()
+				_ = rtspSend(conn, kaCseq, "OPTIONS", baseURL,
+					fmt.Sprintf("Session: %s\r\n", sessionID), auth)
+				kaCseq++
+				writeMu.Unlock()
+			}
+		}
+	}()
+	defer close(kaStop)
 
 	hdr := make([]byte, 4)
 	for {
 		select {
 		case <-s.stopCh:
 			return nil
-		case <-keepaliveTicker.C:
-			_ = rtspSend(conn, cseq, "OPTIONS", baseURL,
-				fmt.Sprintf("Session: %s\r\n", sessionID), auth)
-			cseq++
 		default:
 		}
 
@@ -240,6 +258,8 @@ func rtspSend(conn net.Conn, cseq int, method, uri, extra string, auth *rtspDige
 	return err
 }
 
+const maxRTSPBodyBytes = 1 << 20 // 1 MiB
+
 // rtspReadResponse reads one complete RTSP response including any body.
 func rtspReadResponse(r *bufio.Reader) (string, error) {
 	var sb strings.Builder
@@ -255,6 +275,9 @@ func rtspReadResponse(r *bufio.Reader) (string, error) {
 	}
 	resp := sb.String()
 	if cl := rtspContentLength(resp); cl > 0 {
+		if cl > maxRTSPBodyBytes {
+			return resp, fmt.Errorf("RTSP Content-Length %d exceeds limit", cl)
+		}
 		body := make([]byte, cl)
 		if _, err := io.ReadFull(r, body); err != nil {
 			return resp, err

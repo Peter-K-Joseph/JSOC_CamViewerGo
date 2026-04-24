@@ -135,6 +135,34 @@ class CanvasPlayer {
 
   _setupDecoder(codec, streamCodec) {
     if (this.decoder || this.destroyed) return;
+
+    const candidates = this._decoderConfigCandidates(codec, streamCodec);
+    const isH265 = streamCodec === 'h265' || /^hvc1|^hev1/.test(codec);
+
+    // Async pre-check: use isConfigSupported() to avoid the 10s startup
+    // timeout when the browser lacks H.265 hardware decoding support.
+    if (typeof VideoDecoder.isConfigSupported === 'function') {
+      Promise.all(candidates.map(cfg => VideoDecoder.isConfigSupported(cfg).catch(() => ({ supported: false }))))
+        .then(results => {
+          if (this.destroyed) return;
+          const idx = results.findIndex(r => r.supported);
+          if (idx < 0) {
+            const reason = isH265
+              ? 'h265_not_supported'
+              : 'no supported decoder config';
+            this._fallback(reason);
+            return;
+          }
+          this._createDecoder(candidates[idx], streamCodec);
+        });
+    } else {
+      // Fallback: try synchronous configure (legacy path).
+      this._createDecoder(candidates[0], streamCodec);
+    }
+  }
+
+  _createDecoder(cfg, streamCodec) {
+    if (this.decoder || this.destroyed) return;
     try {
       this.decoder = new VideoDecoder({
         output: (frame) => this._drawFrame(frame),
@@ -143,25 +171,8 @@ class CanvasPlayer {
           this._fallback('decoder error');
         },
       });
-
-      const candidates = this._decoderConfigCandidates(codec, streamCodec);
-      let configured = false;
-      let lastErr = null;
-
-      for (const cfg of candidates) {
-        try {
-          this.decoder.configure(cfg);
-          configured = true;
-          this.codec = cfg.codec;
-          break;
-        } catch (e) {
-          lastErr = e;
-        }
-      }
-
-      if (!configured) {
-        throw lastErr || new Error('no supported decoder config');
-      }
+      this.decoder.configure(cfg);
+      this.codec = cfg.codec;
     } catch (err) {
       console.error('[CanvasPlayer] decoder setup failed', err);
       this._fallback('failed to initialize video decoder for ' + (streamCodec || 'unknown'));
@@ -330,6 +341,18 @@ class CanvasPlayer {
 
     const parent = this.video && this.video.parentElement;
     if (!parent) return;
+
+    // Show H.265 requirements banner when codec is unsupported.
+    if (reason === 'h265_not_supported') {
+      const banner = document.createElement('div');
+      banner.className = 'h265-banner';
+      banner.style.cssText = 'position:absolute;bottom:8px;left:8px;right:8px;z-index:3;' +
+        'background:rgba(0,0,0,0.75);color:#f59e0b;font-size:0.72rem;padding:6px 10px;' +
+        'border-radius:6px;text-align:center;pointer-events:none';
+      banner.textContent = 'H.265 \u2014 requires Safari 17+, Chrome 107+ (hardware), or use VLC with the RTSP URL';
+      parent.style.position = parent.style.position || 'relative';
+      parent.appendChild(banner);
+    }
 
     if (!this.fallbackImg) {
       const img = document.createElement('img');

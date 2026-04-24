@@ -14,7 +14,7 @@ const (
 // sps must be the raw SPS NAL unit (first byte = 0x67 for H.264).
 func CodecString(codec string, sps []byte) string {
 	if codec == "h265" {
-		return "hvc1.1.6.L93.B0"
+		return hevcCodecString(sps)
 	}
 	if len(sps) >= 4 {
 		return fmt.Sprintf("avc1.%02X%02X%02X", sps[1], sps[2], sps[3])
@@ -22,13 +22,43 @@ func CodecString(codec string, sps []byte) string {
 	return "avc1.42E01E"
 }
 
+// hevcCodecString builds an hvc1 codec string from the raw H.265 SPS NAL.
+// Format: hvc1.<profile>.<profile_compat_hex>.<tier><level>
+// Falls back to a safe default if the SPS is too short.
+func hevcCodecString(sps []byte) string {
+	// H.265 SPS NAL has a 2-byte NAL header, then profile_tier_level starts
+	// at byte offset 2 (after skipping sps_video_parameter_set_id and
+	// sps_max_sub_layers_minus1 packed in the first nibble).
+	// The raw SPS layout (byte offsets from NAL start):
+	//   [0:2]  NAL header
+	//   [2]    vps_id(4 bits) | max_sub_layers_minus1(3 bits) | temporal_id_nesting(1 bit)
+	//   [3]    general_profile_space(2) | general_tier_flag(1) | general_profile_idc(5)
+	//   [4:8]  general_profile_compatibility_flags (32 bits)
+	//   [8:14] general_constraint_indicator_flags (48 bits)
+	//   [14]   general_level_idc
+	if len(sps) < 15 {
+		return "hvc1.1.6.L93.B0"
+	}
+	profileIdc := int(sps[3] & 0x1f)
+	tierFlag := (sps[3] >> 5) & 0x01
+	compatFlags := uint32(sps[4])<<24 | uint32(sps[5])<<16 | uint32(sps[6])<<8 | uint32(sps[7])
+	levelIdc := int(sps[14])
+
+	tier := "L"
+	if tierFlag == 1 {
+		tier = "H"
+	}
+	// Reverse bits of compatFlags for the codec string (ISO 14496-15 convention).
+	var rev uint32
+	for i := 0; i < 32; i++ {
+		rev |= ((compatFlags >> uint(i)) & 1) << uint(31-i)
+	}
+	return fmt.Sprintf("hvc1.%d.%X.%s%d.B0", profileIdc, rev, tier, levelIdc)
+}
+
 // MIMEType returns the full MSE MIME type string.
 func MIMEType(codec string, sps []byte) string {
-	cs := CodecString(codec, sps)
-	if codec == "h265" {
-		return fmt.Sprintf(`video/mp4; codecs="%s"`, cs)
-	}
-	return fmt.Sprintf(`video/mp4; codecs="%s"`, cs)
+	return fmt.Sprintf(`video/mp4; codecs="%s"`, CodecString(codec, sps))
 }
 
 // InitSegment creates the ftyp + moov init segment from codec parameter sets.
@@ -54,7 +84,7 @@ func MediaSegment(seq uint32, dts uint64, dur uint32, keyframe bool, avccData []
 
 // AnnexBtoAVCC converts AnnexB start-code NAL units to AVCC 4-byte-length-prefix format.
 func AnnexBtoAVCC(annexB []byte) []byte {
-	nals := splitAnnexB(annexB)
+	nals := SplitAnnexB(annexB)
 	var out []byte
 	for _, nal := range nals {
 		if len(nal) == 0 {
@@ -399,7 +429,8 @@ func buildTrun(dur uint32, keyframe bool, dataLen int, dataOffset int32) []byte 
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func splitAnnexB(data []byte) [][]byte {
+// SplitAnnexB splits an AnnexB byte stream into raw NAL units (start codes stripped).
+func SplitAnnexB(data []byte) [][]byte {
 	var nals [][]byte
 	start := -1
 	i := 0

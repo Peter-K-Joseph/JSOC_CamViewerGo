@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"io"
@@ -8,9 +9,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
+	"github.com/jsoc/camviewer/internal/auth"
 	"github.com/jsoc/camviewer/internal/config"
 	"github.com/jsoc/camviewer/internal/netutil"
 	"github.com/jsoc/camviewer/internal/ptz"
@@ -58,7 +59,19 @@ func main() {
 	for _, cam := range st.List() {
 		if cam.Username != "" && cam.Password != "" && cam.Enabled {
 			if !currentSettings.DirectStreamMode {
-				go mgr.Start(cam, nil)
+				go func(c *store.Camera) {
+					// Re-authenticate to obtain fresh session cookies.
+					// Without cookies the WebSocket source cannot connect
+					// to Dahua cameras' /rtspoverwebsocket endpoint.
+					var cookies []*http.Cookie
+					sess, err := auth.LoginWithFallback(c.IP, c.Port, c.Username, c.Password)
+					if err != nil {
+						log.Printf("[startup] auth %s (%s): %v — starting without cookies", c.Name, c.IP, err)
+					} else {
+						cookies = sess.Cookies
+					}
+					mgr.Start(c, cookies)
+				}(cam)
 			}
 		}
 		// Restore PTZ clients for cameras that had ONVIF configured previously.
@@ -149,6 +162,7 @@ func setupFileLogging(dataDir string) error {
 	}
 	errFile, err := os.OpenFile(filepath.Join(logsDir, "system.error"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
+		allFile.Close()
 		return err
 	}
 
@@ -173,10 +187,10 @@ func (w *splitLogWriter) Write(p []byte) (int, error) {
 }
 
 func isErrorLogLine(p []byte) bool {
-	line := strings.ToLower(string(p))
-	return strings.Contains(line, " error") ||
-		strings.Contains(line, "failed") ||
-		strings.Contains(line, "fatal") ||
-		strings.Contains(line, "panic") ||
-		strings.Contains(line, "unauthorized")
+	low := bytes.ToLower(p)
+	return bytes.Contains(low, []byte(" error")) ||
+		bytes.Contains(low, []byte("failed")) ||
+		bytes.Contains(low, []byte("fatal")) ||
+		bytes.Contains(low, []byte("panic")) ||
+		bytes.Contains(low, []byte("unauthorized"))
 }

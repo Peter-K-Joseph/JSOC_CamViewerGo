@@ -121,6 +121,8 @@ func rtspAuthSend(conn net.Conn, cseq int, method, uri, extra string, auth *rtsp
 	return err
 }
 
+const maxRTSPBodyBytes = 1 << 20 // 1 MiB
+
 func rtspAuthReadResponse(r *bufio.Reader) (string, error) {
 	var sb strings.Builder
 	for {
@@ -135,6 +137,9 @@ func rtspAuthReadResponse(r *bufio.Reader) (string, error) {
 	}
 	resp := sb.String()
 	if cl := rtspAuthContentLength(resp); cl > 0 {
+		if cl > maxRTSPBodyBytes {
+			return resp, fmt.Errorf("RTSP Content-Length %d exceeds limit", cl)
+		}
 		body := make([]byte, cl)
 		if _, err := io.ReadFull(r, body); err != nil {
 			return resp, err

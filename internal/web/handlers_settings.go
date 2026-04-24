@@ -6,7 +6,6 @@ import (
 
 	"github.com/jsoc/camviewer/internal/autostart"
 	"github.com/jsoc/camviewer/internal/settings"
-	"github.com/jsoc/camviewer/internal/store"
 )
 
 // handlePreferencesPage renders the Preferences page.
@@ -89,7 +88,7 @@ func (s *Server) apiChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if body.Current != s.effectivePassword() {
+	if !passwordsMatch(body.Current, s.effectivePassword()) {
 		jsonError(w, "Current password is incorrect.", 401)
 		return
 	}
@@ -115,7 +114,3 @@ func (s *Server) apiChangePassword(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]bool{"ok": true})
 }
 
-// toPublic helper overload used by the settings handler (store.Camera → CameraPublic).
-func cameraEnabled(cam *store.Camera) bool {
-	return cam.Enabled && cam.Username != "" && cam.Password != ""
-}

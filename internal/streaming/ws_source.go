@@ -94,7 +94,11 @@ func (s *WsSource) runOnce() error {
 	}
 	if len(cookies) > 0 {
 		hdr.Set("Cookie", strings.Join(cookies, "; "))
-		log.Printf("[ws_source] WebSocket headers: %d cookies: %v", len(s.cookies), strings.Join(cookies, "; "))
+		names := make([]string, len(s.cookies))
+		for i, c := range s.cookies {
+			names[i] = c.Name
+		}
+		log.Printf("[ws_source] WebSocket upgrade with %d cookies: [%s]", len(s.cookies), strings.Join(names, ", "))
 	} else {
 		log.Printf("[ws_source] WARNING: No RPC2 session cookies available for WebSocket upgrade")
 	}
@@ -448,20 +452,6 @@ func sdpTrackControl(sdp, baseURL string) string {
 		}
 	}
 	return baseURL + "/trackID=0"
-}
-
-// rtspEscape percent-encodes characters that are not safe in an RTSP URL userinfo field.
-func rtspEscape(s string) string {
-	var out strings.Builder
-	for _, b := range []byte(s) {
-		if (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') ||
-			b == '-' || b == '_' || b == '.' || b == '~' {
-			out.WriteByte(b)
-		} else {
-			fmt.Fprintf(&out, "%%%02X", b)
-		}
-	}
-	return out.String()
 }
 
 // rtspStatusLine returns the first line of an RTSP response for logging.

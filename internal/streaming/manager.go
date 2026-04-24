@@ -45,9 +45,10 @@ func (m *Manager) Start(cam *store.Camera, cookies []*http.Cookie) {
 	m.Stop(cam.ID)
 
 	track := NewTrack(cam.StreamKey)
+	proto := m.activeProtocol()
 
 	// Select source based on current settings.
-	src := m.buildSource(cam, cookies, track)
+	src := m.buildSource(cam, cookies, track, proto)
 
 	entry := &streamEntry{
 		track:   track,
@@ -63,21 +64,40 @@ func (m *Manager) Start(cam *store.Camera, cookies []*http.Cookie) {
 	go func() {
 		m.setHealth(cam.ID, store.HealthStarting)
 		src.Run() // blocks until Stop() called or permanent error
+
+		// ── Protocol fallback ────────────────────────────────────────────────
+		// If the primary protocol failed and fallback is enabled, try the
+		// alternate protocol (WS → RTSP or RTSP → WS).
+		if m.shouldFallback(cam.ID, proto) {
+			alt := m.fallbackProtocol(proto)
+			log.Printf("[manager] primary %s failed for %s (%s), falling back to %s",
+				proto, cam.ID, cam.Name, alt)
+			altSrc := m.buildSource(cam, cookies, track, alt)
+
+			m.mu.Lock()
+			if e, ok := m.streams[cam.ID]; ok {
+				e.source = altSrc
+				e.health = store.HealthStarting
+			}
+			m.mu.Unlock()
+
+			altSrc.Run()
+		}
+
 		m.setHealth(cam.ID, store.HealthOffline)
 	}()
 
 	// Flip to "ok" after a brief moment if still running.
 	go func() {
 		time.Sleep(3 * time.Second)
-		m.mu.RLock()
-		e, ok := m.streams[cam.ID]
-		m.mu.RUnlock()
-		if ok && e.health == store.HealthStarting {
-			m.setHealth(cam.ID, store.HealthOK)
+		m.mu.Lock()
+		if e, ok := m.streams[cam.ID]; ok && e.health == store.HealthStarting {
+			e.health = store.HealthOK
 		}
+		m.mu.Unlock()
 	}()
 
-	log.Printf("[manager] started stream for camera %s (%s) via %s", cam.ID, cam.Name, m.activeProtocol())
+	log.Printf("[manager] started stream for camera %s (%s) via %s", cam.ID, cam.Name, proto)
 }
 
 // Stop halts the stream for a camera.
@@ -148,22 +168,18 @@ func (m *Manager) setHealth(id string, h store.StreamHealth) {
 	m.mu.Unlock()
 }
 
-// buildSource creates the appropriate source type based on the current settings.
-func (m *Manager) buildSource(cam *store.Camera, cookies []*http.Cookie, track *Track) cameraSource {
-	proto := settings.ProtocolWS
-	if m.settings != nil {
-		proto = m.settings.Get().StreamProtocol
-	}
-
+// buildSource creates the appropriate source type for the given protocol.
+func (m *Manager) buildSource(cam *store.Camera, cookies []*http.Cookie, track *Track, proto settings.Protocol) cameraSource {
 	switch proto {
 	case settings.ProtocolRTSP:
+		// RTSP uses port 554 by default, NOT the camera's HTTP port.
 		return NewRtspSource(
 			cam.IP, 554,
 			cam.Username, cam.Password,
 			cam.Channel, cam.Subtype,
 			track, m.keepaliveInterval,
 		)
-case settings.ProtocolRTMP:
+	case settings.ProtocolRTMP:
 		// RTMP is camera-push only — not implementable as a pull source.
 		// Fall back to WS and log a warning.
 		log.Printf("[manager] RTMP pull not supported; using WS for camera %s", cam.Name)
@@ -177,6 +193,34 @@ case settings.ProtocolRTMP:
 			track, m.keepaliveInterval,
 		)
 	}
+}
+
+// shouldFallback checks whether the stream is still registered (not Stop'd)
+// and protocol fallback is enabled in settings.
+func (m *Manager) shouldFallback(camID string, primary settings.Protocol) bool {
+	m.mu.RLock()
+	_, registered := m.streams[camID]
+	m.mu.RUnlock()
+	if !registered {
+		return false // Stop() was called — don't retry
+	}
+	if m.settings == nil {
+		return false
+	}
+	s := m.settings.Get()
+	if !s.StreamProtocolFallback {
+		return false
+	}
+	// Only WS↔RTSP fallback makes sense; RTMP is push-only.
+	return primary == settings.ProtocolWS || primary == settings.ProtocolRTSP
+}
+
+// fallbackProtocol returns the alternate protocol for a given primary.
+func (m *Manager) fallbackProtocol(primary settings.Protocol) settings.Protocol {
+	if primary == settings.ProtocolWS {
+		return settings.ProtocolRTSP
+	}
+	return settings.ProtocolWS
 }
 
 func (m *Manager) activeProtocol() settings.Protocol {

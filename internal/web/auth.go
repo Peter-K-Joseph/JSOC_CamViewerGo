@@ -2,6 +2,7 @@ package web
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
 	"net/url"
@@ -62,8 +63,9 @@ func (s *sessionStore) invalidateAll() {
 }
 
 func (s *sessionStore) gc() {
-	for range time.Tick(sessionGCInterval) {
-		now := time.Now()
+	t := time.NewTicker(sessionGCInterval)
+	defer t.Stop()
+	for now := range t.C {
 		s.mu.Lock()
 		for k, exp := range s.tokens {
 			if now.After(exp) {
@@ -72,6 +74,11 @@ func (s *sessionStore) gc() {
 		}
 		s.mu.Unlock()
 	}
+}
+
+// passwordsMatch compares two passwords in constant time to prevent timing attacks.
+func passwordsMatch(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // ── Middleware ────────────────────────────────────────────────────────────────
@@ -125,7 +132,7 @@ func (s *Server) handleAppLoginPost(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 	next := r.FormValue("next")
 
-	if password != s.effectivePassword() {
+	if !passwordsMatch(password, s.effectivePassword()) {
 		s.renderPlain(w, "app-login.html", map[string]interface{}{
 			"Next":  next,
 			"Error": "Incorrect password.",
