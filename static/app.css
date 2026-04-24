@@ -234,9 +234,10 @@ button, input, select {
   align-items: center;
   justify-content: space-between;
   pointer-events: none;
+  z-index: 2;
 }
 .cam-name { font-size: 0.72rem; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cam-channel { position: absolute; top: 6px; left: 8px; font-size: 0.65rem; color: rgba(255,255,255,0.4); }
+.cam-channel { position: absolute; top: 6px; left: 8px; font-size: 0.65rem; color: rgba(255,255,255,0.4); z-index: 2; }
 
 /* Status dot */
 .status-dot {

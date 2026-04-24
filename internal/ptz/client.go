@@ -28,11 +28,15 @@ func xmlEscape(s string) string {
 
 // ── SOAP / WS-Security helpers ───────────────────────────────────────────────
 
-func wsseHeader(username, password string) string {
+func wsseHeader(username, password string, timeOffset time.Duration) string {
 	nonce := make([]byte, 16)
 	rand.Read(nonce) //nolint:errcheck
 	nonceB64 := base64.StdEncoding.EncodeToString(nonce)
-	created := time.Now().UTC().Format(time.RFC3339)
+
+	// Use the camera's clock (our clock + offset) so the Created timestamp
+	// is within the camera's acceptance window.  Dahua / CP-Plus firmware
+	// rejects WS-Security if Created is more than ~30 s off.
+	created := time.Now().Add(timeOffset).UTC().Format("2006-01-02T15:04:05Z")
 
 	// PasswordDigest = Base64(SHA1(nonce_raw ‖ created ‖ password))
 	h := sha1.New() //nolint:gosec
@@ -70,67 +74,148 @@ func soapEnvelope(header, body string) string {
 }
 
 // soapCall sends a SOAP request and returns the raw response body.
-// It includes both WS-Security (in the SOAP envelope) and HTTP-level
-// Basic auth.  If the camera responds with 401 + Digest challenge,
-// the request is retried with HTTP Digest credentials.
+//
+// Auth strategy (Dahua / CP-Plus compatible):
+//  1. WS-Security PasswordDigest (clock-synced) + HTTP Basic
+//  2. If SOAP auth fault → retry with HTTP Digest only (no WS-Security)
+//  3. If HTTP 401 → retry with HTTP Digest
 func (c *Client) soapCall(endpoint, action, body string) ([]byte, error) {
-	payload := soapEnvelope(wsseHeader(c.Username, c.password), body)
-	req, err := http.NewRequest("POST", endpoint, bytes.NewBufferString(payload))
+	// ── Attempt 1: WS-Security + HTTP Basic ──────────────────────────────────
+	wsseHdr := wsseHeader(c.Username, c.password, c.timeOffset)
+	payload := soapEnvelope(wsseHdr, body)
+	data, resp, err := c.doSOAPRequest(endpoint, action, payload, true)
 	if err != nil {
 		return nil, err
 	}
-	// SOAP 1.1: Content-Type is text/xml; the action goes in the SOAPAction header.
+
+	// HTTP 401 → retry with HTTP Digest (no change to SOAP body).
+	if resp != nil && resp.StatusCode == 401 {
+		digestHdr := c.buildHTTPDigest(resp.Header.Get("WWW-Authenticate"), "POST", endpoint)
+		if digestHdr == "" {
+			return nil, fmt.Errorf("HTTP 401: camera rejected credentials (no Digest challenge)")
+		}
+		data, _, err = c.doSOAPRequestWithAuth(endpoint, action, payload, digestHdr)
+		if err != nil {
+			return nil, err
+		}
+		return data, nil
+	}
+
+	// Check for SOAP auth fault → retry with HTTP Digest only (empty SOAP header).
+	if isSOAPAuthFault(data) {
+		plainPayload := soapEnvelope("", body)
+
+		// Try HTTP Basic first.
+		data2, resp2, err2 := c.doSOAPRequest(endpoint, action, plainPayload, true)
+		if err2 != nil {
+			return nil, fmt.Errorf("WS-Security rejected; HTTP Basic also failed: %w", err2)
+		}
+		if resp2 != nil && resp2.StatusCode == 401 {
+			digestHdr := c.buildHTTPDigest(resp2.Header.Get("WWW-Authenticate"), "POST", endpoint)
+			if digestHdr == "" {
+				// Return the original WS-Security error — more descriptive.
+				return nil, fmt.Errorf("HTTP %d SOAP fault: %s", resp.StatusCode, soapFault(data))
+			}
+			data2, _, err2 = c.doSOAPRequestWithAuth(endpoint, action, plainPayload, digestHdr)
+			if err2 != nil {
+				return nil, err2
+			}
+		}
+		if data2 != nil {
+			if fault := soapFault(data2); fault != "" {
+				return nil, fmt.Errorf("SOAP fault: %s", fault)
+			}
+			return data2, nil
+		}
+	}
+
+	return data, nil
+}
+
+// doSOAPRequest sends a SOAP POST and returns (body, resp, error).
+// If withBasic is true, HTTP Basic auth is included.
+// On success (2xx, no SOAP fault) error is nil and resp is nil.
+// On HTTP error or SOAP fault, resp is returned for caller inspection.
+func (c *Client) doSOAPRequest(endpoint, action, payload string, withBasic bool) ([]byte, *http.Response, error) {
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBufferString(payload))
+	if err != nil {
+		return nil, nil, err
+	}
 	req.Header.Set("Content-Type", "text/xml; charset=utf-8")
 	req.Header.Set("SOAPAction", fmt.Sprintf(`"%s"`, action))
-	req.SetBasicAuth(c.Username, c.password)
+	if withBasic {
+		req.SetBasicAuth(c.Username, c.password)
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
-	// If the camera requires HTTP Digest, retry with Digest credentials.
+	// Return the response object for 401 so caller can parse Digest challenge.
 	if resp.StatusCode == 401 {
-		resp.Body.Close()
-		digestHdr := c.buildHTTPDigest(resp.Header.Get("WWW-Authenticate"), "POST", endpoint)
-		if digestHdr != "" {
-			req2, err := http.NewRequest("POST", endpoint, bytes.NewBufferString(payload))
-			if err != nil {
-				return nil, err
-			}
-			req2.Header.Set("Content-Type", "text/xml; charset=utf-8")
-			req2.Header.Set("SOAPAction", fmt.Sprintf(`"%s"`, action))
-			req2.Header.Set("Authorization", digestHdr)
-			resp2, err := c.http.Do(req2)
-			if err != nil {
-				return nil, err
-			}
-			defer resp2.Body.Close()
-			return c.handleSOAPResponse(resp2)
-		}
-		return nil, fmt.Errorf("HTTP 401: camera rejected credentials (no Digest challenge)")
+		return nil, resp, nil
 	}
 
-	return c.handleSOAPResponse(resp)
-}
-
-// handleSOAPResponse reads the body and checks for errors.
-func (c *Client) handleSOAPResponse(resp *http.Response) ([]byte, error) {
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		// Return the data so caller can inspect SOAP faults.
+		return data, resp, nil
+	}
+	if fault := soapFault(data); fault != "" {
+		return data, resp, nil
+	}
+	return data, nil, nil
+}
+
+// doSOAPRequestWithAuth sends a SOAP POST with an explicit Authorization header.
+func (c *Client) doSOAPRequestWithAuth(endpoint, action, payload, authHeader string) ([]byte, *http.Response, error) {
+	req, err := http.NewRequest("POST", endpoint, bytes.NewBufferString(payload))
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	req.Header.Set("SOAPAction", fmt.Sprintf(`"%s"`, action))
+	req.Header.Set("Authorization", authHeader)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, err
 	}
 	if resp.StatusCode >= 400 {
 		if fault := soapFault(data); fault != "" {
-			return nil, fmt.Errorf("HTTP %d SOAP fault: %s", resp.StatusCode, fault)
+			return nil, nil, fmt.Errorf("HTTP %d SOAP fault: %s", resp.StatusCode, fault)
 		}
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(data), 1000))
+		return nil, nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(data), 1000))
 	}
 	if fault := soapFault(data); fault != "" {
-		return nil, fmt.Errorf("SOAP fault: %s", fault)
+		return nil, nil, fmt.Errorf("SOAP fault: %s", fault)
 	}
-	return data, nil
+	return data, nil, nil
+}
+
+// isSOAPAuthFault checks if the response data contains an authentication-related SOAP fault.
+func isSOAPAuthFault(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	fault := soapFault(data)
+	lower := strings.ToLower(fault)
+	return strings.Contains(lower, "not authorized") ||
+		strings.Contains(lower, "unauthorized") ||
+		strings.Contains(lower, "invalid username") ||
+		strings.Contains(lower, "authentication") ||
+		strings.Contains(lower, "sender")
 }
 
 // buildHTTPDigest parses a WWW-Authenticate Digest challenge and returns the
@@ -252,6 +337,11 @@ type Client struct {
 	Username   string
 	password   string
 
+	// timeOffset is the difference between the camera's clock and ours
+	// (cameraTime - localTime).  Applied to WS-Security Created timestamps
+	// so they are within the camera's acceptance window.
+	timeOffset time.Duration
+
 	// Resolved at probe time.
 	ProfileToken string // token of first PTZ-capable media profile
 	VSToken      string // video source token for that profile
@@ -269,7 +359,7 @@ var deviceServicePaths = []string{
 }
 
 // Probe creates and validates an ONVIF client for the given camera.
-// It performs GetCapabilities → GetProfiles to confirm PTZ support.
+// It performs GetSystemDateAndTime → GetCapabilities → GetProfiles to confirm PTZ support.
 func Probe(ip string, port int, username, password string) (*Client, error) {
 	var err error
 	ip, port, err = netutil.NormalizeHostPort(ip, port)
@@ -282,6 +372,22 @@ func Probe(ip string, port int, username, password string) (*Client, error) {
 		http:     &http.Client{Timeout: 10 * time.Second},
 	}
 	base := fmt.Sprintf("http://%s:%d", ip, port)
+
+	// ── Clock sync ───────────────────────────────────────────────────────────
+	// GetSystemDateAndTime is unauthenticated on most cameras.  We need the
+	// camera's time to generate correct WS-Security PasswordDigest timestamps.
+	// Try each device path until one answers.
+	for _, path := range deviceServicePaths {
+		c.DeviceURL = base + path
+		if err := c.syncClock(); err == nil {
+			break
+		}
+	}
+	// If sync fails (camera doesn't support it, network issue, etc.)
+	// we continue with zero offset — WS-Security may still work if clocks
+	// are roughly aligned, and the HTTP Digest fallback covers the rest.
+
+	// ── GetCapabilities ──────────────────────────────────────────────────────
 	var lastErr error
 	for _, path := range deviceServicePaths {
 		c.DeviceURL = base + path
@@ -289,9 +395,6 @@ func Probe(ip string, port int, username, password string) (*Client, error) {
 		if lastErr == nil {
 			break
 		}
-		// Continue to the next path for transient / routing errors.
-		// Stop immediately only on auth failures or SOAP faults — those are
-		// definitive answers from the server regardless of path.
 		if isDefinitiveError(lastErr) {
 			break
 		}
@@ -309,6 +412,83 @@ func Probe(ip string, port int, username, password string) (*Client, error) {
 		return nil, fmt.Errorf("no PTZ-capable media profile found")
 	}
 	return c, nil
+}
+
+// syncClock calls GetSystemDateAndTime (unauthenticated) and computes the
+// offset between the camera's UTC clock and ours.
+func (c *Client) syncClock() error {
+	body := `<tds:GetSystemDateAndTime/>`
+	// Send WITHOUT WS-Security — this call is public on ONVIF-compliant cameras.
+	payload := soapEnvelope("", body)
+	req, err := http.NewRequest("POST", c.DeviceURL, bytes.NewBufferString(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+	req.Header.Set("SOAPAction", `"http://www.onvif.org/ver10/device/wsdl/GetSystemDateAndTime"`)
+
+	localBefore := time.Now()
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	var env struct {
+		Body struct {
+			Resp struct {
+				Info struct {
+					UTCDateTime struct {
+						Date struct {
+							Year  int `xml:"Year"`
+							Month int `xml:"Month"`
+							Day   int `xml:"Day"`
+						} `xml:"Date"`
+						Time struct {
+							Hour   int `xml:"Hour"`
+							Minute int `xml:"Minute"`
+							Second int `xml:"Second"`
+						} `xml:"Time"`
+					} `xml:"UTCDateTime"`
+				} `xml:"SystemDateAndTime"`
+			} `xml:"GetSystemDateAndTimeResponse"`
+		} `xml:"Body"`
+	}
+	if err := xml.Unmarshal(data, &env); err != nil {
+		return fmt.Errorf("parse time: %w", err)
+	}
+
+	d := env.Body.Resp.Info.UTCDateTime
+	if d.Date.Year == 0 {
+		return fmt.Errorf("camera returned empty date")
+	}
+
+	camTime := time.Date(
+		d.Date.Year, time.Month(d.Date.Month), d.Date.Day,
+		d.Time.Hour, d.Time.Minute, d.Time.Second,
+		0, time.UTC,
+	)
+	localMid := localBefore.Add(time.Since(localBefore) / 2).UTC()
+	c.timeOffset = camTime.Sub(localMid)
+
+	if abs(c.timeOffset) > time.Second {
+		fmt.Printf("[ptz] clock offset: camera is %s ahead of local time\n", c.timeOffset)
+	}
+	return nil
+}
+
+func abs(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
+	}
+	return d
 }
 
 // ── Capability & profile discovery ──────────────────────────────────────────
