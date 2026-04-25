@@ -142,11 +142,11 @@ func (s *Server) apiStreamHealth(w http.ResponseWriter, r *http.Request) {
 	cameras := s.store.List()
 
 	type cameraHealth struct {
-		ID             string              `json:"id"`
-		Name           string              `json:"name"`
-		IP             string              `json:"ip"`
-		Port           int                 `json:"port"`
-		HasCredentials bool                `json:"has_credentials"`
+		ID             string               `json:"id"`
+		Name           string               `json:"name"`
+		IP             string               `json:"ip"`
+		Port           int                  `json:"port"`
+		HasCredentials bool                 `json:"has_credentials"`
 		Diag           streaming.StreamDiag `json:"diag"`
 	}
 
@@ -167,4 +167,3 @@ func (s *Server) apiStreamHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonOK(w, out)
 }
-

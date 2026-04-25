@@ -12,7 +12,7 @@ const subscriberBufSize = 32
 type TrackStats struct {
 	Codec       string  `json:"codec"`
 	FPS         float64 `json:"fps"`
-	BitrateBps  float64 `json:"bitrate_bps"`  // bits per second
+	BitrateBps  float64 `json:"bitrate_bps"` // bits per second
 	TotalFrames uint64  `json:"total_frames"`
 	TotalBytes  uint64  `json:"total_bytes"`
 	Keyframes   uint64  `json:"keyframes"`
@@ -42,11 +42,11 @@ type Track struct {
 	dropped     atomic.Uint64
 
 	// Rolling window for FPS / bitrate calculation.
-	winMu      sync.Mutex
-	winFrames  int
-	winBytes   int
-	winStart   time.Time
-	lastFPS    float64
+	winMu       sync.Mutex
+	winFrames   int
+	winBytes    int
+	winStart    time.Time
+	lastFPS     float64
 	lastBitrate float64
 }
 
