@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"embed"
 	"encoding/hex"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -21,6 +23,9 @@ import (
 	"github.com/jsoc/camviewer/internal/streaming"
 	"github.com/jsoc/camviewer/internal/web"
 )
+
+//go:embed static
+var staticFiles embed.FS
 
 func main() {
 	cfg := config.Load()
@@ -108,7 +113,11 @@ func main() {
 		}
 	}()
 
-	staticFS := http.Dir("static")
+	sub, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		log.Fatalf("embed static: %v", err)
+	}
+	staticFS := http.FS(sub)
 	webSrv := web.NewServer(
 		st, mgr, ptzMgr, sett,
 		startupPassword,
