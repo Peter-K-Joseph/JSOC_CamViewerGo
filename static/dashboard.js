@@ -100,7 +100,8 @@ function startPlayer(camId, streamKey) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const wsUrl = `${proto}://${location.host}/ws/annexb/${streamKey}`;
   players[camId] = new MSEPlayer(video, wsUrl, {
-    fallbackUrl: '/proxy/cameras/' + camId + '/stream',
+    fallbackUrl:  '/proxy/cameras/' + camId + '/stream',
+    wasmCameraId: camId,
   });
 }
 
@@ -140,7 +141,8 @@ function openModal(id, name, ip, key, health, rtsp, hasPTZ) {
     if (video && health !== 'offline' && health !== 'auth-failed' && health !== 'unknown') {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       modalPlayer = new MSEPlayer(video, `${proto}://${location.host}/ws/annexb/${key}`, {
-        fallbackUrl: '/proxy/cameras/' + id + '/stream',
+        fallbackUrl:  '/proxy/cameras/' + id + '/stream',
+        wasmCameraId: id,
       });
     }
   }

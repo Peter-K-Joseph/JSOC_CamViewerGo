@@ -8,7 +8,7 @@ const appLoginTmpl = `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>JSOC NVR — Login</title>
   <script>(function(){function a(t){var p=(t==='light'||t==='dark'||t==='system')?t:'system';var v=p==='system'?(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):p;document.documentElement.setAttribute('data-theme',v);document.documentElement.style.colorScheme=v;return p;}var pref='system';try{pref=localStorage.getItem('jsoc-theme')||'system';}catch(e){}a(pref);window.setTheme=function(t){var p=a(t);try{localStorage.setItem('jsoc-theme',p);}catch(e){}};})()</script>
-  <link rel="stylesheet" href="/static/app.css?v=20260425c">
+  <link rel="stylesheet" href="/static/app.css?v=20260425d">
 </head>
 <body style="display:flex;align-items:center;justify-content:center;height:100vh;background:var(--bg)">
 <div class="login-card" style="width:320px">
@@ -111,7 +111,7 @@ const baseTmpl = `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>JSOC NVR</title>
   <script>(function(){function a(t){var p=(t==='light'||t==='dark'||t==='system')?t:'system';var v=p==='system'?(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):p;document.documentElement.setAttribute('data-theme',v);document.documentElement.style.colorScheme=v;return p;}var pref='system';try{pref=localStorage.getItem('jsoc-theme')||'system';}catch(e){}a(pref);window.setTheme=function(t){var p=a(t);try{localStorage.setItem('jsoc-theme',p);}catch(e){}};})()</script>
-  <link rel="stylesheet" href="/static/app.css?v=20260425c">
+  <link rel="stylesheet" href="/static/app.css?v=20260425d">
 </head>
 <body>
 <aside class="sidebar">
@@ -305,8 +305,8 @@ const dashboardTmpl = `{{define "content"}}
 {{end}}
 
 {{define "scripts"}}
-<script src="/static/player.js?v=20260425c"></script>
-<script src="/static/dashboard.js?v=20260425c"></script>
+<script src="/static/player.js?v=20260425d"></script>
+<script src="/static/dashboard.js?v=20260425d"></script>
 <script>
 const DIRECT_MODE     = {{.DirectMode}};
 const DIRECT_WINDOWED = {{.DirectWindowed}};
@@ -338,7 +338,7 @@ const discoverTmpl = `{{define "content"}}
 {{end}}
 
 {{define "scripts"}}
-<script src="/static/discover.js?v=20260425c"></script>
+<script src="/static/discover.js?v=20260425d"></script>
 {{end}}`
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -394,7 +394,7 @@ const configTmpl = `{{define "content"}}
 {{end}}
 
 {{define "scripts"}}
-<script src="/static/config.js?v=20260425c"></script>
+<script src="/static/config.js?v=20260425d"></script>
 {{end}}`
 
 // ── Login ─────────────────────────────────────────────────────────────────────
@@ -448,7 +448,7 @@ const loginTmpl = `{{define "content"}}
 <script>
 const CAMERA_ID = "{{.Camera.ID}}";
 </script>
-<script src="/static/login.js?v=20260425c"></script>
+<script src="/static/login.js?v=20260425d"></script>
 {{end}}`
 
 // ── Viewer (standalone fullscreen) ────────────────────────────────────────────
@@ -472,13 +472,14 @@ const viewerTmpl = `{{define "content"}}
 {{end}}
 
 {{define "scripts"}}
-<script src="/static/player.js?v=20260425c"></script>
+<script src="/static/player.js?v=20260425d"></script>
 <script>
   const v = document.getElementById('main-video');
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const wsUrl = proto + '://' + location.host + '/ws/camera/{{.Camera.ID}}/annexb';
   new MSEPlayer(v, wsUrl, {
-    fallbackUrl: '/proxy/cameras/{{.Camera.ID}}/stream',
+    fallbackUrl:  '/proxy/cameras/{{.Camera.ID}}/stream',
+    wasmCameraId: '{{.Camera.ID}}',
   });
 </script>
 {{end}}`
@@ -638,7 +639,7 @@ const preferencesTmpl = `{{define "content"}}
 {{end}}
 
 {{define "scripts"}}
-<script src="/static/settings.js?v=20260425c"></script>
+<script src="/static/settings.js?v=20260425d"></script>
 {{end}}`
 
 // ── Stream Health ─────────────────────────────────────────────────────────────
@@ -732,6 +733,6 @@ const healthTmpl = `{{define "content"}}
 
 {{define "scripts"}}
 {{if .HealthMonitoring}}
-<script src="/static/health.js?v=20260425c"></script>
+<script src="/static/health.js?v=20260425d"></script>
 {{end}}
 {{end}}`

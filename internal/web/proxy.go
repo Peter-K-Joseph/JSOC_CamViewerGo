@@ -25,6 +25,60 @@ var proxyClient = &http.Client{
 	},
 }
 
+// handleCameraDecoderAsset proxies the camera's WASM decoder JS files so the
+// browser can load them same-origin (avoiding CORS) without any credentials.
+// Only two files are whitelisted: the Emscripten WASM binary (ffmpegasm.js)
+// and the H.265 decoder wrapper (h265Decoder.js).
+//
+// Route: GET /proxy/cameras/{id}/decoder/{file}
+func (s *Server) handleCameraDecoderAsset(w http.ResponseWriter, r *http.Request) {
+	id   := chi.URLParam(r, "id")
+	file := chi.URLParam(r, "file")
+
+	// Strict whitelist — only expose the two files the browser H.265 WASM
+	// decoder needs.  Any other path returns 404.
+	camPaths := map[string]string{
+		"ffmpegasm.js":   "module/Decode/ffmpegasm.js",
+		"h265Decoder.js": "module/Decode/h265Decoder.js",
+	}
+	camPath, ok := camPaths[file]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	cam, ok := s.store.Get(id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	targetURL := fmt.Sprintf("http://%s:%d/%s", cam.IP, cam.Port, camPath)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
+	if err != nil {
+		http.Error(w, "proxy error", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("User-Agent", "JSOC-CamViewer/1.0")
+
+	resp, err := proxyClient.Do(req)
+	if err != nil {
+		http.Error(w, "camera unreachable: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, "camera returned "+resp.Status, http.StatusBadGateway)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	// Decoder files don't change while the camera runs — cache them for a day.
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	io.Copy(w, resp.Body) //nolint:errcheck
+}
+
 // handleMJPEGProxy fetches a Dahua/CP-Plus MJPEG stream from the camera and
 // relays it verbatim to the browser.  The camera URL pattern works for both
 // Dahua and CP-Plus (same firmware).

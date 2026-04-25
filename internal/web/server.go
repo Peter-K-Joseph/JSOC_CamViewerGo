@@ -99,6 +99,9 @@ func (s *Server) buildRouter(staticFS http.FileSystem) *chi.Mux {
 		// ── MJPEG proxy ───────────────────────────────────────────────────────
 		r.Get("/proxy/cameras/{id}/stream", s.handleMJPEGProxy)
 
+		// ── Camera decoder asset proxy ────────────────────────────────────────
+		r.Get("/proxy/cameras/{id}/decoder/{file}", s.handleCameraDecoderAsset)
+
 		// ── API ───────────────────────────────────────────────────────────────
 		r.Post("/api/discover", s.apiDiscover)
 		r.Get("/api/cameras", s.apiListCameras)
