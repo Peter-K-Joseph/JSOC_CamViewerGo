@@ -52,15 +52,37 @@ func NewWsSource(host string, port int, username, password string,
 	}
 }
 
+// ErrAuthFailed is returned by Run() when the source gives up after
+// repeated authentication failures.  The manager uses this to trigger
+// protocol fallback.
+var ErrAuthFailed = fmt.Errorf("auth failed")
+
 // Run starts the WebSocket ingestion loop. It reconnects on error until Stop() is called.
 func (s *WsSource) Run() {
 	backoff := time.Second
+	authFailures := 0
+	const maxAuthFailures = 3
 	for {
 		if s.stopped.Load() {
 			return
 		}
-		if err := s.runOnce(); err != nil {
+		err := s.runOnce()
+		if err != nil {
 			log.Printf("[ws_source] %s:%d error: %v — retry in %s", s.host, s.port, err, backoff)
+
+			// Count consecutive auth failures and give up quickly so the
+			// manager can fall back to native RTSP.
+			if isAuthError(err) {
+				authFailures++
+				if authFailures >= maxAuthFailures {
+					log.Printf("[ws_source] %s:%d giving up after %d auth failures", s.host, s.port, authFailures)
+					return
+				}
+			} else {
+				authFailures = 0 // reset on non-auth errors
+			}
+		} else {
+			authFailures = 0
 		}
 		select {
 		case <-s.stopCh:
@@ -71,6 +93,19 @@ func (s *WsSource) Run() {
 			}
 		}
 	}
+}
+
+// isAuthError checks whether an error indicates an authentication failure
+// (as opposed to a transient network issue).
+func isAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "status 401") ||
+		strings.Contains(s, "status 403") ||
+		strings.Contains(s, "unauthorized") ||
+		strings.Contains(s, "forbidden")
 }
 
 func (s *WsSource) Stop() {

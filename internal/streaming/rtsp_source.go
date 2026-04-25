@@ -51,12 +51,27 @@ func NewRtspSource(host string, port int, username, password string,
 // Run starts the TCP RTSP ingestion loop. It reconnects on error until Stop() is called.
 func (s *RtspSource) Run() {
 	backoff := time.Second
+	authFailures := 0
+	const maxAuthFailures = 3
 	for {
 		if s.stopped.Load() {
 			return
 		}
-		if err := s.runOnce(); err != nil {
+		err := s.runOnce()
+		if err != nil {
 			log.Printf("[rtsp_source] %s:%d error: %v — retry in %s", s.host, s.port, err, backoff)
+
+			if isAuthError(err) {
+				authFailures++
+				if authFailures >= maxAuthFailures {
+					log.Printf("[rtsp_source] %s:%d giving up after %d auth failures", s.host, s.port, authFailures)
+					return
+				}
+			} else {
+				authFailures = 0
+			}
+		} else {
+			authFailures = 0
 		}
 		select {
 		case <-s.stopCh:

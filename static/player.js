@@ -29,6 +29,11 @@ class CanvasPlayer {
     this.frameCounter = 0;
     this.lastPTS = 0;
 
+    // rAF-paced rendering: only draw the latest decoded frame per vsync.
+    this.pendingFrame = null;
+    this.rafId = null;
+    this._renderFrame = this._renderFrame.bind(this);
+
     this._onResize = this._onResize.bind(this);
     this._start();
   }
@@ -234,7 +239,9 @@ class CanvasPlayer {
     if (payload.byteLength === 0) return;
 
     // Keep decode queue bounded in live mode.
-    if (this.decoder.decodeQueueSize > 8 && !keyframe) {
+    // Threshold of 30 frames (~1s at 30fps) absorbs normal TCP jitter.
+    // Keyframes always pass so decoding can resume cleanly after a stall.
+    if (this.decoder.decodeQueueSize > 30 && !keyframe) {
       return;
     }
 
@@ -260,10 +267,33 @@ class CanvasPlayer {
   }
 
   _drawFrame(frame) {
-    if (!this.canvas || !this.ctx) {
-      frame.close();
+    // rAF-paced: store the latest decoded frame and schedule a single
+    // requestAnimationFrame.  Intermediate frames between vsyncs are
+    // discarded (close the previous pending frame) — acceptable for
+    // live video and keeps latency minimal.
+    if (this.pendingFrame) {
+      this.pendingFrame.close();
+    }
+    this.pendingFrame = frame;
+
+    if (!this.rafId && !this.destroyed) {
+      this.rafId = requestAnimationFrame(this._renderFrame);
+    }
+
+    if (!this.started) {
+      this.started = true;
+      this._clearStartupTimer();
+    }
+  }
+
+  _renderFrame() {
+    this.rafId = null;
+    const frame = this.pendingFrame;
+    if (!frame || !this.canvas || !this.ctx) {
+      if (frame) { frame.close(); this.pendingFrame = null; }
       return;
     }
+    this.pendingFrame = null;
     this._onResize();
 
     const ctx = this.ctx;
@@ -285,11 +315,6 @@ class CanvasPlayer {
       ctx.drawImage(frame, dx, dy, dw, dh);
     } finally {
       frame.close();
-    }
-
-    if (!this.started) {
-      this.started = true;
-      this._clearStartupTimer();
     }
 
     this._ensurePlaying();
@@ -380,6 +405,8 @@ class CanvasPlayer {
   destroy() {
     this.destroyed = true;
     this._clearStartupTimer();
+    if (this.rafId) { cancelAnimationFrame(this.rafId); this.rafId = null; }
+    if (this.pendingFrame) { this.pendingFrame.close(); this.pendingFrame = null; }
     if (this.ws) { this.ws.close(); this.ws = null; }
     if (this.decoder) {
       try { this.decoder.close(); } catch (_) {}

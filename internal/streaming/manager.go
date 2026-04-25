@@ -47,6 +47,13 @@ func (m *Manager) Start(cam *store.Camera, cookies []*http.Cookie) {
 	track := NewTrack(cam.StreamKey)
 	proto := m.activeProtocol()
 
+	// If we have no RPC2 cookies for the WebSocket source, go directly to
+	// native RTSP — the WS source will just fail with 401 repeatedly.
+	if proto == settings.ProtocolWS && len(cookies) == 0 {
+		log.Printf("[manager] no RPC2 cookies for %s (%s), using RTSP directly", cam.ID, cam.Name)
+		proto = settings.ProtocolRTSP
+	}
+
 	// Select source based on current settings.
 	src := m.buildSource(cam, cookies, track, proto)
 
