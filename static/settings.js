@@ -80,6 +80,7 @@ window.setTheme = function (t) {
       direct_stream_windowed:   !!(document.getElementById('pref-windowed')  || {}).checked,
       stream_protocol:          proto ? proto.value : 'ws',
       stream_protocol_fallback: !!(document.getElementById('pref-fallback')  || {}).checked,
+      health_monitoring:        !!(document.getElementById('pref-health')    || {}).checked,
     };
 
     try {

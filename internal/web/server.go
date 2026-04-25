@@ -82,6 +82,7 @@ func (s *Server) buildRouter(staticFS http.FileSystem) *chi.Mux {
 
 		// ── Page routes ───────────────────────────────────────────────────────
 		r.Get("/", s.handleDashboard)
+		r.Get("/health", s.handleHealthPage)
 		r.Get("/discover", s.handleDiscoverPage)
 		r.Get("/config", s.handleConfigPage)
 		r.Get("/preferences", s.handlePreferencesPage)
@@ -111,6 +112,7 @@ func (s *Server) buildRouter(staticFS http.FileSystem) *chi.Mux {
 		r.Get("/api/settings", s.apiGetSettings)
 		r.Post("/api/settings", s.apiUpdateSettings)
 		r.Post("/api/change-password", s.apiChangePassword)
+		r.Get("/api/health", s.apiStreamHealth)
 	})
 
 	return r
@@ -190,6 +192,7 @@ func buildTemplates() map[string]*template.Template {
 		"login.html":       loginTmpl,
 		"viewer.html":      viewerTmpl,
 		"preferences.html": preferencesTmpl,
+		"health.html":      healthTmpl,
 	}
 
 	sets := make(map[string]*template.Template, len(pages)+2)

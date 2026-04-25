@@ -8,7 +8,7 @@ const appLoginTmpl = `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>JSOC NVR — Login</title>
   <script>(function(){function a(t){var p=(t==='light'||t==='dark'||t==='system')?t:'system';var v=p==='system'?(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):p;document.documentElement.setAttribute('data-theme',v);document.documentElement.style.colorScheme=v;return p;}var pref='system';try{pref=localStorage.getItem('jsoc-theme')||'system';}catch(e){}a(pref);window.setTheme=function(t){var p=a(t);try{localStorage.setItem('jsoc-theme',p);}catch(e){}};})()</script>
-  <link rel="stylesheet" href="/static/app.css?v=20260421b">
+  <link rel="stylesheet" href="/static/app.css?v=20260425c">
 </head>
 <body style="display:flex;align-items:center;justify-content:center;height:100vh;background:var(--bg)">
 <div class="login-card" style="width:320px">
@@ -111,7 +111,7 @@ const baseTmpl = `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>JSOC NVR</title>
   <script>(function(){function a(t){var p=(t==='light'||t==='dark'||t==='system')?t:'system';var v=p==='system'?(window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):p;document.documentElement.setAttribute('data-theme',v);document.documentElement.style.colorScheme=v;return p;}var pref='system';try{pref=localStorage.getItem('jsoc-theme')||'system';}catch(e){}a(pref);window.setTheme=function(t){var p=a(t);try{localStorage.setItem('jsoc-theme',p);}catch(e){}};})()</script>
-  <link rel="stylesheet" href="/static/app.css?v=20260421b">
+  <link rel="stylesheet" href="/static/app.css?v=20260425c">
 </head>
 <body>
 <aside class="sidebar">
@@ -121,6 +121,7 @@ const baseTmpl = `<!DOCTYPE html>
   </div>
   <nav class="sidebar-nav">
     <a href="/"            class="nav-item {{if eq .Page "dashboard"}}active{{end}}"><span class="nav-icon">⊞</span> Dashboard</a>
+    <a href="/health"      class="nav-item {{if eq .Page "health"}}active{{end}}"><span class="nav-icon">♡</span> Stream Health</a>
     <a href="/discover"    class="nav-item {{if eq .Page "discover"}}active{{end}}"><span class="nav-icon">⌖</span> Discover</a>
     <a href="/config"      class="nav-item {{if eq .Page "config"}}active{{end}}"><span class="nav-icon">⚙</span> Configuration</a>
     <a href="/preferences" class="nav-item {{if eq .Page "preferences"}}active{{end}}"><span class="nav-icon">⊛</span> Preferences</a>
@@ -304,8 +305,8 @@ const dashboardTmpl = `{{define "content"}}
 {{end}}
 
 {{define "scripts"}}
-<script src="/static/player.js?v=20260421b"></script>
-<script src="/static/dashboard.js?v=20260421b"></script>
+<script src="/static/player.js?v=20260425c"></script>
+<script src="/static/dashboard.js?v=20260425c"></script>
 <script>
 const DIRECT_MODE     = {{.DirectMode}};
 const DIRECT_WINDOWED = {{.DirectWindowed}};
@@ -337,7 +338,7 @@ const discoverTmpl = `{{define "content"}}
 {{end}}
 
 {{define "scripts"}}
-<script src="/static/discover.js?v=20260421b"></script>
+<script src="/static/discover.js?v=20260425c"></script>
 {{end}}`
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -393,7 +394,7 @@ const configTmpl = `{{define "content"}}
 {{end}}
 
 {{define "scripts"}}
-<script src="/static/config.js?v=20260421b"></script>
+<script src="/static/config.js?v=20260425c"></script>
 {{end}}`
 
 // ── Login ─────────────────────────────────────────────────────────────────────
@@ -447,7 +448,7 @@ const loginTmpl = `{{define "content"}}
 <script>
 const CAMERA_ID = "{{.Camera.ID}}";
 </script>
-<script src="/static/login.js?v=20260421b"></script>
+<script src="/static/login.js?v=20260425c"></script>
 {{end}}`
 
 // ── Viewer (standalone fullscreen) ────────────────────────────────────────────
@@ -471,7 +472,7 @@ const viewerTmpl = `{{define "content"}}
 {{end}}
 
 {{define "scripts"}}
-<script src="/static/player.js?v=20260421b"></script>
+<script src="/static/player.js?v=20260425c"></script>
 <script>
   const v = document.getElementById('main-video');
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -487,132 +488,250 @@ const preferencesTmpl = `{{define "content"}}
 <div class="topbar">
   <span class="topbar-title">Preferences</span>
 </div>
-<div class="page-content" style="max-width:640px">
+<div class="page-content">
 
   <div id="pref-saved" class="hidden" style="background:var(--ok-dim,rgba(34,197,94,.15));border:1px solid var(--ok);border-radius:6px;padding:0.5rem 0.9rem;margin-bottom:1rem;font-size:0.82rem;color:var(--ok)">
     ✓ Settings saved
   </div>
   <div id="pref-error" class="hidden" style="background:rgba(239,68,68,.12);border:1px solid #ef4444;border-radius:6px;padding:0.5rem 0.9rem;margin-bottom:1rem;font-size:0.82rem;color:#ef4444"></div>
 
-  {{/* ── Appearance ── */}}
-  <div class="pref-section">
-    <div class="pref-section-title">Appearance</div>
-    <div class="pref-row">
-      <div class="pref-label">
-        <span>Theme</span>
-        <span class="pref-desc">Choose dark, light, or follow your system setting.</span>
+  {{/* Main settings grid: 2 columns on desktop, 1 on mobile */}}
+  <div class="pref-grid">
+    {{/* Left column: Appearance + System */}}
+    <div class="pref-column">
+      {{/* ── Appearance ── */}}
+      <div class="pref-section">
+        <div class="pref-section-title">Appearance</div>
+        <div class="pref-row">
+          <div class="pref-label">
+            <span>Theme</span>
+            <span class="pref-desc">Choose dark, light, or follow your system setting.</span>
+          </div>
+          <select id="pref-theme">
+            <option value="dark">Dark</option>
+            <option value="system">System</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
       </div>
-      <select id="pref-theme">
-        <option value="dark">Dark</option>
-        <option value="system">System</option>
-        <option value="light">Light</option>
-      </select>
+
+      {{/* ── System ── */}}
+      <div class="pref-section">
+        <div class="pref-section-title">System</div>
+
+        <div class="pref-row">
+          <div class="pref-label">
+            <span>Auto-start on boot</span>
+            <span class="pref-desc">Register JSOC NVR as a login/startup service (LaunchAgent on macOS, systemd on Linux, Registry on Windows).</span>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="pref-autostart" {{if .Settings.AutoStart}}checked{{end}}>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="pref-row">
+          <div class="pref-label">
+            <span>Advanced health monitoring</span>
+            <span class="pref-desc">Enable the Stream Health page with per-camera diagnostics, protocol badges, and live error tracking. Disable to save resources.</span>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="pref-health" {{if .Settings.HealthMonitoring}}checked{{end}}>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    {{/* Right column: Streaming + Security */}}
+    <div class="pref-column">
+      {{/* ── Streaming ── */}}
+      <div class="pref-section">
+        <div class="pref-section-title">Streaming</div>
+
+        <div class="pref-row">
+          <div class="pref-label">
+            <span>Direct stream mode</span>
+            <span class="pref-desc">Bypass the server pipeline. Your browser fetches the camera MJPEG stream via a thin proxy. Lower latency; no fMP4/MSE transcoding.</span>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="pref-direct" {{if .Settings.DirectStreamMode}}checked{{end}}>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="pref-row pref-indent" id="row-windowed" {{if not .Settings.DirectStreamMode}}style="opacity:.4;pointer-events:none"{{end}}>
+          <div class="pref-label">
+            <span>Open each camera in its own window</span>
+            <span class="pref-desc">Each camera cell opens a fullscreen popup showing the MJPEG stream with a live status dot. Requires popups to be allowed for this site.</span>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="pref-windowed" {{if .Settings.DirectStreamWindowed}}checked{{end}}>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="pref-row" style="margin-top:0.75rem">
+          <div class="pref-label">
+            <span>Stream protocol</span>
+            <span class="pref-desc">Primary protocol the server uses to connect to cameras.</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:0.35rem">
+            <label class="radio-row">
+              <input type="radio" name="pref-proto" value="ws"    {{if eq .Settings.StreamProtocol "ws"   }}checked{{end}}> WebSocket (WS) — Dahua /rtspoverwebsocket (port 80)
+            </label>
+            <label class="radio-row">
+              <input type="radio" name="pref-proto" value="rtsp"  {{if eq .Settings.StreamProtocol "rtsp" }}checked{{end}}> RTSP TCP — standard port 554, Digest auth
+            </label>
+          </div>
+        </div>
+
+        <div class="pref-row" style="margin-top:0.5rem">
+          <div class="pref-label">
+            <span>Auto-reconnect on failure</span>
+            <span class="pref-desc">Automatically retry the chosen protocol when the stream drops.</span>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="pref-fallback" {{if .Settings.StreamProtocolFallback}}checked{{end}}>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      {{/* ── Security ── */}}
+      <div class="pref-section">
+        <div class="pref-section-title">Security</div>
+
+        <div class="pref-row" style="flex-direction:column;align-items:stretch;gap:0.6rem">
+          <div class="pref-label" style="margin-bottom:0.2rem">
+            <span>Change login password</span>
+            <span class="pref-desc">All active sessions will be signed out immediately after the change.</span>
+          </div>
+
+          <div class="login-field">
+            <label>Current password</label>
+            <input type="password" id="pwd-current" autocomplete="current-password" placeholder="Current password">
+          </div>
+          <div class="login-field">
+            <label>New password <span class="text-muted">(min 6 chars)</span></label>
+            <input type="password" id="pwd-new" autocomplete="new-password" placeholder="New password">
+          </div>
+          <div class="login-field">
+            <label>Confirm new password</label>
+            <input type="password" id="pwd-confirm" autocomplete="new-password" placeholder="Repeat new password">
+          </div>
+
+          <div id="pwd-error" class="login-error hidden"></div>
+          <div id="pwd-ok"    class="hidden" style="font-size:0.82rem;color:var(--ok)">✓ Password changed — please sign in again.</div>
+        </div>
+      </div>
     </div>
   </div>
 
-  {{/* ── System ── */}}
-  <div class="pref-section">
-    <div class="pref-section-title">System</div>
-
-    <div class="pref-row">
-      <div class="pref-label">
-        <span>Auto-start on boot</span>
-        <span class="pref-desc">Register JSOC NVR as a login/startup service (LaunchAgent on macOS, systemd on Linux, Registry on Windows).</span>
-      </div>
-      <label class="toggle">
-        <input type="checkbox" id="pref-autostart" {{if .Settings.AutoStart}}checked{{end}}>
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-  </div>
-
-  {{/* ── Streaming ── */}}
-  <div class="pref-section">
-    <div class="pref-section-title">Streaming</div>
-
-    <div class="pref-row">
-      <div class="pref-label">
-        <span>Direct stream mode</span>
-        <span class="pref-desc">Bypass the server pipeline. Your browser fetches the camera MJPEG stream via a thin proxy. Lower latency; no fMP4/MSE transcoding.</span>
-      </div>
-      <label class="toggle">
-        <input type="checkbox" id="pref-direct" {{if .Settings.DirectStreamMode}}checked{{end}}>
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-
-    <div class="pref-row pref-indent" id="row-windowed" {{if not .Settings.DirectStreamMode}}style="opacity:.4;pointer-events:none"{{end}}>
-      <div class="pref-label">
-        <span>Open each camera in its own window</span>
-        <span class="pref-desc">Each camera cell opens a fullscreen popup showing the MJPEG stream with a live status dot. Requires popups to be allowed for this site.</span>
-      </div>
-      <label class="toggle">
-        <input type="checkbox" id="pref-windowed" {{if .Settings.DirectStreamWindowed}}checked{{end}}>
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-
-    <div class="pref-row" style="margin-top:0.75rem">
-      <div class="pref-label">
-        <span>Stream protocol</span>
-        <span class="pref-desc">Primary protocol the server uses to connect to cameras.</span>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:0.35rem">
-        <label class="radio-row">
-          <input type="radio" name="pref-proto" value="ws"    {{if eq .Settings.StreamProtocol "ws"   }}checked{{end}}> WebSocket (WS) — Dahua /rtspoverwebsocket (port 80)
-        </label>
-        <label class="radio-row">
-          <input type="radio" name="pref-proto" value="rtsp"  {{if eq .Settings.StreamProtocol "rtsp" }}checked{{end}}> RTSP TCP — standard port 554, Digest auth
-        </label>
-      </div>
-    </div>
-
-    <div class="pref-row" style="margin-top:0.5rem">
-      <div class="pref-label">
-        <span>Auto-reconnect on failure</span>
-        <span class="pref-desc">Automatically retry the chosen protocol when the stream drops.</span>
-      </div>
-      <label class="toggle">
-        <input type="checkbox" id="pref-fallback" {{if .Settings.StreamProtocolFallback}}checked{{end}}>
-        <span class="toggle-slider"></span>
-      </label>
-    </div>
-  </div>
-
-  <button class="btn" onclick="savePrefs()" style="margin-top:0.5rem">Save changes</button>
-
-  {{/* ── Security ── */}}
-  <div class="pref-section" style="margin-top:1.25rem">
-    <div class="pref-section-title">Security</div>
-
-    <div class="pref-row" style="flex-direction:column;align-items:stretch;gap:0.6rem">
-      <div class="pref-label" style="margin-bottom:0.2rem">
-        <span>Change login password</span>
-        <span class="pref-desc">All active sessions will be signed out immediately after the change.</span>
-      </div>
-
-      <div class="login-field">
-        <label>Current password</label>
-        <input type="password" id="pwd-current" autocomplete="current-password" placeholder="Current password">
-      </div>
-      <div class="login-field">
-        <label>New password <span class="text-muted">(min 6 chars)</span></label>
-        <input type="password" id="pwd-new" autocomplete="new-password" placeholder="New password">
-      </div>
-      <div class="login-field">
-        <label>Confirm new password</label>
-        <input type="password" id="pwd-confirm" autocomplete="new-password" placeholder="Repeat new password">
-      </div>
-
-      <div id="pwd-error" class="login-error hidden"></div>
-      <div id="pwd-ok"    class="hidden" style="font-size:0.82rem;color:var(--ok)">✓ Password changed — please sign in again.</div>
-
-      <button class="btn" style="align-self:flex-start" onclick="changePassword()">Change password</button>
-    </div>
+  {{/* Sticky action bar at bottom */}}
+  <div class="pref-actions">
+    <button class="btn" onclick="savePrefs()">Save changes</button>
+    <button class="btn" onclick="changePassword()">Change password</button>
+    <div id="pref-status" style="margin-left:0.5rem;font-size:0.82rem"></div>
   </div>
 </div>
 {{end}}
 
 {{define "scripts"}}
-<script src="/static/settings.js?v=20260421b"></script>
+<script src="/static/settings.js?v=20260425c"></script>
+{{end}}`
+
+// ── Stream Health ─────────────────────────────────────────────────────────────
+const healthTmpl = `{{define "content"}}
+<div class="topbar">
+  <span class="topbar-title">Stream Health</span>
+  {{if not .HealthMonitoring}}<span class="pill pill-warn" style="margin-left:0.5rem">Monitoring Disabled</span>{{end}}
+  <span style="flex:1"></span>
+  <button class="btn btn-sm" id="health-refresh" onclick="refreshHealth()">↻ Refresh</button>
+</div>
+<div class="page-content" id="health-page">
+
+  {{if not .HealthMonitoring}}
+  <div style="text-align:center;padding:3rem 1rem;color:var(--text3)">
+    <div style="font-size:2rem;opacity:0.3;margin-bottom:0.75rem">♡</div>
+    <div style="font-size:0.9rem;margin-bottom:0.5rem">Advanced health monitoring is disabled.</div>
+    <div style="font-size:0.78rem">Enable it in <a href="/preferences" style="color:var(--accent2)">Preferences → System</a> to see per-camera diagnostics.</div>
+  </div>
+  {{else}}
+
+  {{/* Summary cards */}}
+  <div class="health-summary" id="health-summary">
+    <div class="health-card health-card-total">
+      <div class="health-card-value" id="hc-total">{{len .Cameras}}</div>
+      <div class="health-card-label">Total Cameras</div>
+    </div>
+    <div class="health-card health-card-ok">
+      <div class="health-card-value" id="hc-ok">—</div>
+      <div class="health-card-label">Streaming</div>
+    </div>
+    <div class="health-card health-card-starting">
+      <div class="health-card-value" id="hc-starting">—</div>
+      <div class="health-card-label">Starting</div>
+    </div>
+    <div class="health-card health-card-auth">
+      <div class="health-card-value" id="hc-auth">—</div>
+      <div class="health-card-label">Auth Failed</div>
+    </div>
+    <div class="health-card health-card-offline">
+      <div class="health-card-value" id="hc-offline">—</div>
+      <div class="health-card-label">Offline</div>
+    </div>
+  </div>
+
+  {{/* Per-camera detail table */}}
+  <table class="nvr-table" id="health-table">
+    <thead>
+      <tr>
+        <th>Camera</th>
+        <th>IP</th>
+        <th>Status</th>
+        <th>Protocol</th>
+        <th>Codec</th>
+        <th>FPS</th>
+        <th>Bitrate</th>
+        <th>Uptime</th>
+        <th>Reconnects</th>
+        <th>Dropped</th>
+        <th>Viewers</th>
+        <th>Last Error</th>
+      </tr>
+    </thead>
+    <tbody id="health-tbody">
+      <tr><td colspan="12" class="text-muted" style="text-align:center;padding:2rem">Loading…</td></tr>
+    </tbody>
+  </table>
+
+  {{/* Per-camera chart panel (hidden until a row is clicked) */}}
+  <div class="health-chart-panel" id="health-chart-panel" style="display:none">
+    <div class="health-chart-header">
+      <span class="health-chart-title" id="chart-cam-name">—</span>
+      <div class="health-chart-live-stats" id="chart-live-stats"></div>
+      <button class="btn btn-sm" id="chart-close" onclick="closeChart()">✕ Close</button>
+    </div>
+    <div class="health-chart-hint">Click a camera row to view live metrics. Data updates every 2 seconds.</div>
+    <div class="health-charts-grid">
+      <div class="health-chart-box">
+        <div class="health-chart-box-label">Frame Rate (FPS)</div>
+        <canvas id="chart-fps" width="560" height="180"></canvas>
+      </div>
+      <div class="health-chart-box">
+        <div class="health-chart-box-label">Bitrate</div>
+        <canvas id="chart-bitrate" width="560" height="180"></canvas>
+      </div>
+    </div>
+  </div>
+
+  {{end}}
+</div>
+{{end}}
+
+{{define "scripts"}}
+{{if .HealthMonitoring}}
+<script src="/static/health.js?v=20260425c"></script>
+{{end}}
 {{end}}`

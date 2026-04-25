@@ -1,8 +1,24 @@
 package streaming
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+	"time"
+)
 
 const subscriberBufSize = 32
+
+// TrackStats holds live performance metrics for a track.
+type TrackStats struct {
+	Codec       string  `json:"codec"`
+	FPS         float64 `json:"fps"`
+	BitrateBps  float64 `json:"bitrate_bps"`  // bits per second
+	TotalFrames uint64  `json:"total_frames"`
+	TotalBytes  uint64  `json:"total_bytes"`
+	Keyframes   uint64  `json:"keyframes"`
+	Dropped     uint64  `json:"dropped"`
+	Subscribers int     `json:"subscribers"`
+}
 
 // Track is a single camera stream's fan-out hub.
 // The ws_source publishes AccessUnits; RTSP sessions subscribe.
@@ -18,10 +34,27 @@ type Track struct {
 
 	subsMu sync.Mutex
 	subs   []chan AccessUnit
+
+	// Performance counters (lock-free).
+	totalFrames atomic.Uint64
+	totalBytes  atomic.Uint64
+	keyframes   atomic.Uint64
+	dropped     atomic.Uint64
+
+	// Rolling window for FPS / bitrate calculation.
+	winMu      sync.Mutex
+	winFrames  int
+	winBytes   int
+	winStart   time.Time
+	lastFPS    float64
+	lastBitrate float64
 }
 
 func NewTrack(key string) *Track {
-	return &Track{Key: key}
+	return &Track{
+		Key:      key,
+		winStart: time.Now(),
+	}
 }
 
 // UpdateParams stores the latest codec parameter sets thread-safely.
@@ -73,6 +106,27 @@ func (t *Track) Unsubscribe(ch chan AccessUnit) {
 // Publish fans an AccessUnit out to all subscribers.
 // Slow subscribers drop frames (non-blocking send).
 func (t *Track) Publish(au AccessUnit) {
+	byteLen := uint64(len(au.Data))
+	t.totalFrames.Add(1)
+	t.totalBytes.Add(byteLen)
+	if au.Keyframe {
+		t.keyframes.Add(1)
+	}
+
+	// Update rolling window.
+	t.winMu.Lock()
+	t.winFrames++
+	t.winBytes += len(au.Data)
+	elapsed := time.Since(t.winStart).Seconds()
+	if elapsed >= 2.0 { // flush window every 2 seconds
+		t.lastFPS = float64(t.winFrames) / elapsed
+		t.lastBitrate = float64(t.winBytes) * 8.0 / elapsed
+		t.winFrames = 0
+		t.winBytes = 0
+		t.winStart = time.Now()
+	}
+	t.winMu.Unlock()
+
 	t.subsMu.Lock()
 	defer t.subsMu.Unlock()
 	for _, ch := range t.subs {
@@ -80,7 +134,27 @@ func (t *Track) Publish(au AccessUnit) {
 		case ch <- au:
 		default:
 			// subscriber too slow — drop frame
+			t.dropped.Add(1)
 		}
+	}
+}
+
+// Stats returns live performance metrics.
+func (t *Track) Stats() TrackStats {
+	t.winMu.Lock()
+	fps := t.lastFPS
+	bitrate := t.lastBitrate
+	t.winMu.Unlock()
+
+	return TrackStats{
+		Codec:       t.Codec,
+		FPS:         fps,
+		BitrateBps:  bitrate,
+		TotalFrames: t.totalFrames.Load(),
+		TotalBytes:  t.totalBytes.Load(),
+		Keyframes:   t.keyframes.Load(),
+		Dropped:     t.dropped.Load(),
+		Subscribers: t.SubscriberCount(),
 	}
 }
 

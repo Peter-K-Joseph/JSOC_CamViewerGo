@@ -6,6 +6,8 @@ import (
 
 	"github.com/jsoc/camviewer/internal/autostart"
 	"github.com/jsoc/camviewer/internal/settings"
+	"github.com/jsoc/camviewer/internal/store"
+	"github.com/jsoc/camviewer/internal/streaming"
 )
 
 // handlePreferencesPage renders the Preferences page.
@@ -112,5 +114,57 @@ func (s *Server) apiChangePassword(w http.ResponseWriter, r *http.Request) {
 	s.sessions.invalidateAll()
 
 	jsonOK(w, map[string]bool{"ok": true})
+}
+
+// handleHealthPage renders the Stream Health page.
+func (s *Server) handleHealthPage(w http.ResponseWriter, r *http.Request) {
+	sett := s.settings.Get()
+	cameras := s.store.List()
+	pubs := make([]store.CameraPublic, 0, len(cameras))
+	for _, c := range cameras {
+		pubs = append(pubs, s.toPublic(c))
+	}
+	s.render(w, "health.html", page("health", map[string]interface{}{
+		"Cameras":          pubs,
+		"HealthMonitoring": sett.HealthMonitoring,
+	}))
+}
+
+// apiStreamHealth returns diagnostics for all active streams as JSON.
+func (s *Server) apiStreamHealth(w http.ResponseWriter, r *http.Request) {
+	sett := s.settings.Get()
+	if !sett.HealthMonitoring {
+		jsonOK(w, map[string]string{"status": "disabled"})
+		return
+	}
+
+	diags := s.manager.AllDiags()
+	cameras := s.store.List()
+
+	type cameraHealth struct {
+		ID             string              `json:"id"`
+		Name           string              `json:"name"`
+		IP             string              `json:"ip"`
+		Port           int                 `json:"port"`
+		HasCredentials bool                `json:"has_credentials"`
+		Diag           streaming.StreamDiag `json:"diag"`
+	}
+
+	out := make([]cameraHealth, 0, len(cameras))
+	for _, cam := range cameras {
+		d, ok := diags[cam.ID]
+		if !ok {
+			d = streaming.StreamDiag{Health: store.HealthUnknown}
+		}
+		out = append(out, cameraHealth{
+			ID:             cam.ID,
+			Name:           cam.Name,
+			IP:             cam.IP,
+			Port:           cam.Port,
+			HasCredentials: cam.Username != "" && cam.Password != "",
+			Diag:           d,
+		})
+	}
+	jsonOK(w, out)
 }
 

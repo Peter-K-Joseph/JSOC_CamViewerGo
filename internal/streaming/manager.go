@@ -13,8 +13,20 @@ import (
 
 // cameraSource is implemented by WsSource and RtspSource.
 type cameraSource interface {
-	Run()
+	Run() error
 	Stop()
+}
+
+// StreamDiag holds per-camera diagnostics exposed via the health API.
+type StreamDiag struct {
+	Health         store.StreamHealth `json:"health"`
+	LastError      string             `json:"last_error,omitempty"`
+	ActiveProtocol string             `json:"active_protocol"`
+	FallbackActive bool               `json:"fallback_active"`
+	StartedAt      time.Time          `json:"started_at"`
+	Reconnects     int                `json:"reconnects"`
+	UptimeSeconds  float64            `json:"uptime_seconds"`
+	Track          TrackStats         `json:"track"`
 }
 
 // Manager owns all per-camera stream goroutines and their tracks.
@@ -26,10 +38,15 @@ type Manager struct {
 }
 
 type streamEntry struct {
-	track   *Track
-	source  cameraSource
-	health  store.StreamHealth
-	cookies []*http.Cookie
+	track          *Track
+	source         cameraSource
+	health         store.StreamHealth
+	cookies        []*http.Cookie
+	lastError      string
+	activeProtocol settings.Protocol
+	fallbackActive bool
+	startedAt      time.Time
+	reconnects     int
 }
 
 func NewManager(keepaliveInterval time.Duration, st *settings.Store) *Manager {
@@ -58,10 +75,12 @@ func (m *Manager) Start(cam *store.Camera, cookies []*http.Cookie) {
 	src := m.buildSource(cam, cookies, track, proto)
 
 	entry := &streamEntry{
-		track:   track,
-		source:  src,
-		health:  store.HealthStarting,
-		cookies: cookies,
+		track:          track,
+		source:         src,
+		health:         store.HealthStarting,
+		cookies:        cookies,
+		activeProtocol: proto,
+		startedAt:      time.Now(),
 	}
 
 	m.mu.Lock()
@@ -70,7 +89,22 @@ func (m *Manager) Start(cam *store.Camera, cookies []*http.Cookie) {
 
 	go func() {
 		m.setHealth(cam.ID, store.HealthStarting)
-		src.Run() // blocks until Stop() called or permanent error
+		err := src.Run() // blocks until Stop() called or permanent error
+
+		// Record the error for diagnostics.
+		if err != nil {
+			m.mu.Lock()
+			if e, ok := m.streams[cam.ID]; ok {
+				e.lastError = err.Error()
+				e.reconnects++
+			}
+			m.mu.Unlock()
+
+			// Classify: auth failure → HealthAuthFailed
+			if isAuthError(err) {
+				m.setHealth(cam.ID, store.HealthAuthFailed)
+			}
+		}
 
 		// ── Protocol fallback ────────────────────────────────────────────────
 		// If the primary protocol failed and fallback is enabled, try the
@@ -85,13 +119,35 @@ func (m *Manager) Start(cam *store.Camera, cookies []*http.Cookie) {
 			if e, ok := m.streams[cam.ID]; ok {
 				e.source = altSrc
 				e.health = store.HealthStarting
+				e.activeProtocol = alt
+				e.fallbackActive = true
 			}
 			m.mu.Unlock()
 
-			altSrc.Run()
+			altErr := altSrc.Run()
+			if altErr != nil {
+				m.mu.Lock()
+				if e, ok := m.streams[cam.ID]; ok {
+					e.lastError = altErr.Error()
+					e.reconnects++
+				}
+				m.mu.Unlock()
+				if isAuthError(altErr) {
+					m.setHealth(cam.ID, store.HealthAuthFailed)
+				}
+			}
 		}
 
-		m.setHealth(cam.ID, store.HealthOffline)
+		// Only set offline if not already auth-failed.
+		m.mu.RLock()
+		curHealth := store.HealthUnknown
+		if e, ok := m.streams[cam.ID]; ok {
+			curHealth = e.health
+		}
+		m.mu.RUnlock()
+		if curHealth != store.HealthAuthFailed {
+			m.setHealth(cam.ID, store.HealthOffline)
+		}
 	}()
 
 	// Flip to "ok" after a brief moment if still running.
@@ -235,4 +291,43 @@ func (m *Manager) activeProtocol() settings.Protocol {
 		return m.settings.Get().StreamProtocol
 	}
 	return settings.ProtocolWS
+}
+
+// Diag returns diagnostics for a single camera stream.
+func (m *Manager) Diag(id string) StreamDiag {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if e, ok := m.streams[id]; ok {
+		return StreamDiag{
+			Health:         e.health,
+			LastError:      e.lastError,
+			ActiveProtocol: string(e.activeProtocol),
+			FallbackActive: e.fallbackActive,
+			StartedAt:      e.startedAt,
+			Reconnects:     e.reconnects,
+			UptimeSeconds:  time.Since(e.startedAt).Seconds(),
+			Track:          e.track.Stats(),
+		}
+	}
+	return StreamDiag{Health: store.HealthUnknown}
+}
+
+// AllDiags returns diagnostics for every active stream, keyed by camera ID.
+func (m *Manager) AllDiags() map[string]StreamDiag {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make(map[string]StreamDiag, len(m.streams))
+	for id, e := range m.streams {
+		out[id] = StreamDiag{
+			Health:         e.health,
+			LastError:      e.lastError,
+			ActiveProtocol: string(e.activeProtocol),
+			FallbackActive: e.fallbackActive,
+			StartedAt:      e.startedAt,
+			Reconnects:     e.reconnects,
+			UptimeSeconds:  time.Since(e.startedAt).Seconds(),
+			Track:          e.track.Stats(),
+		}
+	}
+	return out
 }

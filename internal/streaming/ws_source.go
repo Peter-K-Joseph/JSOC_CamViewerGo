@@ -58,16 +58,18 @@ func NewWsSource(host string, port int, username, password string,
 var ErrAuthFailed = fmt.Errorf("auth failed")
 
 // Run starts the WebSocket ingestion loop. It reconnects on error until Stop() is called.
-func (s *WsSource) Run() {
+func (s *WsSource) Run() error {
 	backoff := time.Second
 	authFailures := 0
 	const maxAuthFailures = 3
+	var lastErr error
 	for {
 		if s.stopped.Load() {
-			return
+			return lastErr
 		}
 		err := s.runOnce()
 		if err != nil {
+			lastErr = err
 			log.Printf("[ws_source] %s:%d error: %v — retry in %s", s.host, s.port, err, backoff)
 
 			// Count consecutive auth failures and give up quickly so the
@@ -76,17 +78,18 @@ func (s *WsSource) Run() {
 				authFailures++
 				if authFailures >= maxAuthFailures {
 					log.Printf("[ws_source] %s:%d giving up after %d auth failures", s.host, s.port, authFailures)
-					return
+					return lastErr
 				}
 			} else {
 				authFailures = 0 // reset on non-auth errors
 			}
 		} else {
 			authFailures = 0
+			lastErr = nil
 		}
 		select {
 		case <-s.stopCh:
-			return
+			return lastErr
 		case <-time.After(backoff):
 			if backoff < 30*time.Second {
 				backoff *= 2

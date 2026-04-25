@@ -43,12 +43,17 @@ type Settings struct {
 	// StreamProtocolFallback enables automatic fallback when the primary
 	// protocol fails.  Order: WS → RTSP → (RTMP when implemented).
 	StreamProtocolFallback bool `json:"stream_protocol_fallback"`
+
+	// HealthMonitoring enables the advanced stream health monitoring page.
+	// When disabled the /health route returns a minimal view to save resources.
+	HealthMonitoring bool `json:"health_monitoring"`
 }
 
 func defaults() *Settings {
 	return &Settings{
 		StreamProtocol:         ProtocolWS,
 		StreamProtocolFallback: true,
+		HealthMonitoring:       true,
 	}
 }
 
